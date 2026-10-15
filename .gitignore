@@ -1,0 +1,5 @@
+*.FCBak
+*.FCStd1
+__pycache__/
+*.pyc
+.venv/
