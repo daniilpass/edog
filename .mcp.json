@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "freecad": {
+      "command": "C:\\Users\\anil1\\AppData\\Roaming\\Python\\Python312\\Scripts\\uvx.exe",
+      "args": ["freecad-mcp"]
+    }
+  }
+}
