@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EDOG</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+<header>
+  <div class="brand">EDOG</div>
+  <div class="status">
+    <span id="st-link" class="pill">нет связи</span>
+    <span id="st-driver" class="pill">драйвер</span>
+    <span id="st-pad" class="pill">геймпад</span>
+  </div>
+  <div class="header-actions">
+    <label class="switch" title="Подать/снять сигнал с серво">
+      <input type="checkbox" id="torque"><span>Серво</span>
+    </label>
+    <button id="estop" class="estop">СТОП</button>
+  </div>
+</header>
+
+<main>
+  <section class="viewer">
+    <div id="scene"></div>
+    <div class="overlay" id="overlay"></div>
+    <div class="hint">Вращать — мышь/палец, клик по суставу — выбрать серво</div>
+  </section>
+
+  <aside class="panel">
+    <div class="card">
+      <h2>Режим</h2>
+      <div class="seg" id="modes">
+        <button data-mode="stand">Стойка</button>
+        <button data-mode="walk">Ходьба</button>
+        <button data-mode="manual">Ручной</button>
+      </div>
+      <div class="row poses" id="poses"></div>
+    </div>
+
+    <div class="card">
+      <h2>Корпус</h2>
+      <label class="slider">Высота <output id="o-height"></output>
+        <input type="range" id="height" step="1"></label>
+      <label class="slider">Тангаж <output id="o-pitch"></output>
+        <input type="range" id="pitch" min="-30" max="30" step="1"></label>
+      <label class="slider">Крен <output id="o-roll"></output>
+        <input type="range" id="roll" min="-30" max="30" step="1"></label>
+    </div>
+
+    <div class="card">
+      <h2>Движение <small>WASD / стрелки</small></h2>
+      <div class="dpad" id="dpad">
+        <button data-vx="1" data-turn="0" style="grid-area:up">▲</button>
+        <button data-vx="0" data-turn="-1" style="grid-area:left">◀</button>
+        <button data-vx="0" data-turn="1" style="grid-area:right">▶</button>
+        <button data-vx="-1" data-turn="0" style="grid-area:down">▼</button>
+      </div>
+      <div class="muted" id="drive-info"></div>
+    </div>
+
+    <div class="card" id="servo-detail">
+      <h2>Тест и калибровка <span id="sd-name">—</span></h2>
+      <div class="muted" id="sd-empty">Выберите сустав на модели или строку в таблице.</div>
+      <div id="sd-body" hidden>
+        <label class="switch installed"><input type="checkbox" id="sd-installed">
+          <span>Серво подключено <small class="muted">(без отметки сигнал на канал не идёт)</small></span></label>
+        <div class="kv" id="sd-kv"></div>
+
+        <label class="slider">Угол серво <output id="o-sd-angle"></output>
+          <input type="range" id="sd-angle" min="0" max="180" step="0.5"></label>
+        <div class="row nudge">
+          <button data-delta="-5">−5°</button><button data-delta="-1">−1°</button>
+          <button data-delta="1">+1°</button><button data-delta="5">+5°</button>
+        </div>
+        <div class="row">
+          <button data-test="center" title="Перед установкой крыла">90° центр</button>
+          <button data-test="ref">Монтажное положение</button>
+          <button data-test="sweep" id="sd-sweep">Проход по ходу</button>
+        </div>
+
+        <ol class="wizard">
+          <li><b>До установки крыла:</b> отметьте «подключено», включите «Серво», нажмите <i>90° центр</i>.
+            Наденьте крыло так, чтобы <span id="wz-zero-hint"></span> — насколько позволяют шлицы.</li>
+          <li><b>Точная подстройка:</b> кнопками ±1° доведите сустав точно до монтажного положения и запишите:
+            <div class="row">сустав сейчас =
+              <input type="number" id="cal-joint" value="0" step="1" class="narrow">°
+              <button id="cal-set">Записать zero</button></div></li>
+          <li><b>Направление:</b> нажмите <i>+5°</i> — <span id="wz-dir-hint"></span>.
+            Если ушло в другую сторону:
+            <div class="row"><button id="cal-flip">Инвертировать dir</button></div></li>
+          <li><b>Пределы:</b> осторожно подведите сустав к упору (не до треска) и запишите текущий угол:
+            <div class="row"><button id="cal-min-cur">min = текущий</button>
+              <button id="cal-max-cur">max = текущий</button></div></li>
+          <li><b>Проверка:</b> <i>Проход по ходу</i> — серво медленно пройдёт min → max и вернётся.</li>
+        </ol>
+
+        <details>
+          <summary>Значения вручную</summary>
+          <div class="calib">
+            <label>zero <input type="number" id="cal-zero" step="0.5"></label>
+            <label>dir <select id="cal-dir"><option>1</option><option>-1</option></select></label>
+            <label>min <input type="number" id="cal-min" step="1"></label>
+            <label>max <input type="number" id="cal-max" step="1"></label>
+          </div>
+          <div class="row"><button id="cal-apply">Применить</button></div>
+        </details>
+        <div class="row">
+          <button id="cal-save" class="primary">Сохранить калибровку</button>
+          <span class="muted" id="cal-dirty"></span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="gamepad card">
+    <h2>Геймпад <span id="gp-state" class="pill">—</span></h2>
+    <div class="gp-grid">
+      <div>
+        <div class="kv" id="gp-kv"></div>
+        <div class="axes" id="gp-axes"></div>
+      </div>
+      <div>
+        <table class="mapping"><tbody id="gp-map"></tbody></table>
+      </div>
+      <div>
+        <div class="row" style="margin-top:0">
+          <button id="bt-scan">Найти устройства</button>
+          <span class="muted" id="bt-status"></span>
+        </div>
+        <ul class="bt-list" id="bt-list"></ul>
+      </div>
+    </div>
+    <details class="howto">
+      <summary>Как подключить геймпад</summary>
+      <ol>
+        <li>Переведите геймпад в режим сопряжения:
+          <ul>
+            <li><b>DualShock 4 / DualSense</b> — зажать <i>Share</i> + <i>PS</i>, пока световая панель не замигает двойными вспышками.</li>
+            <li><b>Xbox (BT-модель)</b> — включить кнопкой <i>Xbox</i>, затем удерживать кнопку сопряжения на торце до быстрого мигания.</li>
+            <li><b>8BitDo</b> — включить в X-input/Android-режиме (<i>Start</i> + <i>X</i> или <i>B</i>), затем удерживать <i>Pair</i> 3 с.</li>
+          </ul>
+        </li>
+        <li>Нажмите <b>«Найти устройства»</b> (поиск ~8 с) и затем <b>«Подключить»</b> у вашего геймпада.</li>
+        <li>После первого сопряжения геймпад подключается сам: достаточно нажать на нём кнопку питания.</li>
+        <li>Статус вверху станет зелёным. Нажмите <b>Start</b>, чтобы подать сигнал на серво, затем <b>A / ✕</b> — стойка.</li>
+      </ol>
+      <p class="muted">Без портала то же самое делает <code>firmware/os/pair-gamepad.sh</code> по SSH.
+        Если стики перепутаны — проверьте коды в <code>evtest</code> и поправьте <code>[gamepad.axes]</code> в config.toml.
+        При потере связи собака останавливается и выравнивает корпус, поза сохраняется.</p>
+    </details>
+  </section>
+
+  <section class="servos">
+    <table>
+      <thead><tr>
+        <th>Серво</th><th>Подкл.</th><th>Канал</th><th>Сустав, °</th><th>Серво, °</th><th>Цель, °</th><th>Импульс, мкс</th><th>Пределы</th>
+      </tr></thead>
+      <tbody id="servo-rows"></tbody>
+    </table>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

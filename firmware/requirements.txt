@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn>=0.29
+websockets>=12
+smbus2>=0.4; sys_platform == "linux"
+# На Raspberry Pi ставится из apt (python3-evdev), venv создаётся с --system-site-packages
+evdev>=1.6; sys_platform == "linux"

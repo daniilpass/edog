@@ -1,0 +1,182 @@
+{
+  "units": "mm",
+  "axes": "x вперёд, y вверх, z вправо; начало — центр корпуса на высоте осей бёдер",
+  "source": "cad/web/export_web_models.py",
+  "geometry": {
+    "femur_mm": 50.0,
+    "tibia_mm": 41.7,
+    "foot_inset_mm": 19.1
+  },
+  "hips": {
+    "FL": [
+      49.49,
+      0.0,
+      -66.46
+    ],
+    "FR": [
+      49.49,
+      0.0,
+      66.46
+    ],
+    "RL": [
+      -49.49,
+      0.0,
+      -66.46
+    ],
+    "RR": [
+      -49.49,
+      0.0,
+      66.46
+    ]
+  },
+  "parts": [
+    {
+      "file": "body.stl",
+      "attach": "body",
+      "color": "#e8e2d6"
+    },
+    {
+      "file": "frames.stl",
+      "attach": "body",
+      "color": "#cfcfca"
+    },
+    {
+      "file": "lid.stl",
+      "attach": "body",
+      "color": "#e8e2d6"
+    },
+    {
+      "file": "hip_servos.stl",
+      "attach": "body",
+      "color": "#2b4fa8"
+    },
+    {
+      "file": "femur_FL.stl",
+      "attach": "hip",
+      "legs": [
+        "FL"
+      ],
+      "color": "#5b92f0"
+    },
+    {
+      "file": "tibia_FL.stl",
+      "attach": "knee",
+      "legs": [
+        "FL"
+      ],
+      "color": "#5b92f0"
+    },
+    {
+      "file": "tibia_insert_FL.stl",
+      "attach": "knee",
+      "legs": [
+        "FL"
+      ],
+      "color": "#5b92f0"
+    },
+    {
+      "file": "knee_servo_FL.stl",
+      "attach": "knee",
+      "legs": [
+        "FL"
+      ],
+      "color": "#2b4fa8"
+    },
+    {
+      "file": "femur_FR.stl",
+      "attach": "hip",
+      "legs": [
+        "FR"
+      ],
+      "color": "#f08a3c"
+    },
+    {
+      "file": "tibia_FR.stl",
+      "attach": "knee",
+      "legs": [
+        "FR"
+      ],
+      "color": "#f08a3c"
+    },
+    {
+      "file": "tibia_insert_FR.stl",
+      "attach": "knee",
+      "legs": [
+        "FR"
+      ],
+      "color": "#f08a3c"
+    },
+    {
+      "file": "knee_servo_FR.stl",
+      "attach": "knee",
+      "legs": [
+        "FR"
+      ],
+      "color": "#2b4fa8"
+    },
+    {
+      "file": "femur_RL.stl",
+      "attach": "hip",
+      "legs": [
+        "RL"
+      ],
+      "color": "#5b92f0"
+    },
+    {
+      "file": "tibia_RL.stl",
+      "attach": "knee",
+      "legs": [
+        "RL"
+      ],
+      "color": "#5b92f0"
+    },
+    {
+      "file": "tibia_insert_RL.stl",
+      "attach": "knee",
+      "legs": [
+        "RL"
+      ],
+      "color": "#5b92f0"
+    },
+    {
+      "file": "knee_servo_RL.stl",
+      "attach": "knee",
+      "legs": [
+        "RL"
+      ],
+      "color": "#2b4fa8"
+    },
+    {
+      "file": "femur_RR.stl",
+      "attach": "hip",
+      "legs": [
+        "RR"
+      ],
+      "color": "#f08a3c"
+    },
+    {
+      "file": "tibia_RR.stl",
+      "attach": "knee",
+      "legs": [
+        "RR"
+      ],
+      "color": "#f08a3c"
+    },
+    {
+      "file": "tibia_insert_RR.stl",
+      "attach": "knee",
+      "legs": [
+        "RR"
+      ],
+      "color": "#f08a3c"
+    },
+    {
+      "file": "knee_servo_RR.stl",
+      "attach": "knee",
+      "legs": [
+        "RR"
+      ],
+      "color": "#2b4fa8"
+    }
+  ]
+}

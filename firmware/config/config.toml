@@ -1,0 +1,103 @@
+# Конфигурация EDOG. Файл правится руками.
+# Калибровка серво (zero / dir / пределы) пишется из веб-портала в calibration.json
+# рядом с этим файлом и перекрывает значения отсюда.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[driver]
+type = "pca9685"          # "mock" — без железа (разработка на ПК)
+i2c_bus = 1
+address = 0x40
+frequency_hz = 50
+oscillator_hz = 25000000  # у разных плат PCA9685 реально 25–27 МГц; подстроить, если углы «плывут»
+
+[geometry]
+femur_mm = 50.0           # между осями крыльев на Femur (Femur_hub7: 50 мм)
+tibia_mm = 41.7           # ось колена → середина подошвы (Tibia_v2_SG90_fit, см. cad/web)
+body_length_mm = 200.0
+body_width_mm = 95.0      # колея: расстояние между лапами левого и правого борта
+
+[motion]
+loop_hz = 50
+max_speed_dps = 300       # ограничение скорости поворота серво, °/с
+stand_height_mm = 70.0    # высота оси бедра над полом в стойке
+min_height_mm = 35.0
+max_height_mm = 88.0
+max_tilt_deg = 15.0       # тангаж: предел и для команды, и для правого стика
+max_roll_deg = 8.0        # крен: ноги без отведения, при крене лапы скользят вбок (~1.3 мм/°)
+gait_hz = 1.6             # шагов (полных циклов) в секунду
+stride_mm = 30.0          # длина шага при полном отклонении стика
+lift_mm = 15.0            # высота подъёма лапы
+drive_timeout_s = 0.5     # команда drive из веба гаснет без повторения
+
+[servo_defaults]
+installed = false         # сигнал только на подключённые серво; включается в портале по мере сборки
+range_deg = 180.0
+pulse_min_us = 500.0      # импульс для 0°
+pulse_max_us = 2500.0     # импульс для range_deg
+min_deg = 5.0             # программные пределы угла серво
+max_deg = 175.0
+# zero — угол серво при нулевом угле сустава. По умолчанию = 90 − dir·ref_deg,
+# то есть в центре серво (90°) сустав стоит в монтажном положении. Уточняется калибровкой.
+
+# Монтажное положение сустава: в нём надевается крыло при серво в 90°
+# и по нему удобно калибровать (оно легко выставляется на глаз/угольником).
+[joints.hip]
+ref_deg = 0.0             # бедро вертикально вниз
+[joints.knee]
+ref_deg = 90.0            # голень под прямым углом к бедру (рядом со стойкой)
+
+# Ноги. x_mm — смещение оси бедра от центра корпуса (+ вперёд; оси бёдер в 99 мм друг от друга).
+# knee_dir: -1 — колено смотрит назад, +1 — вперёд.
+# Углы суставов: hip 0° — бедро вертикально вниз, + — лапа вперёд;
+#                knee 0° — голень на одной линии с бедром, + — голень поворачивается вперёд.
+# dir: знак связи «угол сустава → угол серво». Зеркальные стороны обычно с противоположным знаком.
+[legs.FL]
+side = "left"
+x_mm = 49.5
+knee_dir = -1
+hip = { channel = 0, dir = 1 }
+knee = { channel = 1, dir = 1 }
+
+[legs.FR]
+side = "right"
+x_mm = 49.5
+knee_dir = -1
+hip = { channel = 2, dir = -1 }
+knee = { channel = 3, dir = -1 }
+
+[legs.RL]
+side = "left"
+x_mm = -49.5
+knee_dir = -1
+hip = { channel = 4, dir = 1 }
+knee = { channel = 5, dir = 1 }
+
+[legs.RR]
+side = "right"
+x_mm = -49.5
+knee_dir = -1
+hip = { channel = 6, dir = -1 }
+knee = { channel = 7, dir = -1 }
+
+# Геймпад (evdev, стандартная раскладка Linux).
+# Имена кодов: evtest /dev/input/eventN
+[gamepad]
+deadzone = 0.12
+
+[gamepad.axes]
+drive = "ABS_Y"           # левый стик: вперёд/назад
+turn = "ABS_X"            # левый стик: поворот
+pitch = "ABS_RY"          # правый стик: тангаж (у Xbox по BT бывает ABS_RZ)
+roll = "ABS_RX"           # правый стик: крен (у Xbox по BT бывает ABS_Z)
+height = "ABS_HAT0Y"      # крестовина вверх/вниз: высота
+
+[gamepad.buttons]
+BTN_SOUTH = "stand"         # A / ✕
+BTN_EAST = "sit"            # B / ○
+BTN_WEST = "lie"            # X / □
+BTN_NORTH = "walk_toggle"   # Y / △
+BTN_START = "torque_toggle" # Start / Options
+BTN_SELECT = "estop"        # Back / Share

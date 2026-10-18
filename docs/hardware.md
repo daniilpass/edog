@@ -3,7 +3,7 @@
 ## Заказано / есть
 
 ### Вычислитель и управление
-- Raspberry Pi 3B+ (вместо оригинального RPi Zero — поэтому кастомная платформа на магнитах: `cad/custom/chassis_magnets.stl` (тело) и `cad/custom/platform_magnets.stl` (платформа под RPi), исходник — `cad/freecad/body_magnets.FCStd`)
+- Raspberry Pi 3B+ (вместо оригинального RPi Zero — поэтому кастомная платформа на магнитах: `cad/custom/chassis_small.stl` (тело) и `cad/custom/platform_small.stl` (платформа под RPi), исходник — `cad/freecad/body_magnets.FCStd`)
 - PCA9685 — PWM-драйвер на 16 сервоприводов (I2C)
 
 ### Приводы
