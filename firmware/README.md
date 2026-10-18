@@ -31,14 +31,14 @@ os/
    - пользователя и пароль;
    - Wi-Fi;
    - включить SSH.
-2. Зайти по SSH и склонировать репозиторий:
+2. С ПК (Git Bash) отправить прошивку на Pi:
+   ```bash
+   firmware/os/deploy.sh <user>@edog.local
+   ```
+   На Pi попадают только `firmware/` (без тестов) и `cad/web/`, около 1 МБ. Репозиторий и исходники CAD на Pi не нужны.
+3. На Pi запустить настройку и перезагрузиться:
    ```bash
    ssh <user>@edog.local
-   sudo apt install -y git
-   git clone <url репозитория> ~/edog
-   ```
-3. Запустить настройку и перезагрузиться:
-   ```bash
    sudo ~/edog/firmware/os/setup.sh
    sudo reboot
    ```
@@ -52,7 +52,7 @@ journalctl -u edog -f     # логи сервиса
 sudo systemctl restart edog
 ```
 
-Обновление кода: `cd ~/edog && git pull && sudo systemctl restart edog`.
+Обновление кода — с ПК: `firmware/os/deploy.sh`. Скрипт заменит код и модели, перезапустит сервис и не тронет venv и `calibration.json`.
 
 ## Проверка без PCA9685 и серво
 
