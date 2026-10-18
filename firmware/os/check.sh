@@ -2,6 +2,7 @@
 # Самодиагностика Raspberry Pi под EDOG (можно без PCA9685 и серво).
 # Запуск: ~/edog/firmware/os/check.sh
 set -uo pipefail
+export PATH="$PATH:/usr/sbin:/sbin"  # i2cdetect лежит в /usr/sbin, а в ssh-сессии без логина его нет в PATH
 
 FIRMWARE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${1:-8080}"
@@ -10,7 +11,8 @@ fails=0
 ok()   { printf '  \e[32mOK\e[0m    %s\n' "$*"; }
 warn() { printf '  \e[33mWARN\e[0m  %s\n' "$*"; }
 fail() { printf '  \e[31mFAIL\e[0m  %s\n' "$*"; fails=$((fails + 1)); }
-check() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else fail "$1${3:+ — $3}"; fi; }
+# без pipefail: иначе `… | grep -q` при раннем выходе grep даёт SIGPIPE и ложный FAIL
+check() { if (set +o pipefail; eval "$2") >/dev/null 2>&1; then ok "$1"; else fail "$1${3:+ — $3}"; fi; }
 
 echo "Система"
 [[ "$(uname -m)" == "aarch64" ]] && ok "64-bit ОС" || warn "ОС не 64-bit ($(uname -m)) — зависимости могут собираться из исходников"
@@ -20,7 +22,9 @@ throttled="$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)"
 
 echo "I²C"
 check "/dev/i2c-1 есть (I²C включён)" "test -e /dev/i2c-1" "sudo raspi-config nonint do_i2c 0 и перезагрузка"
-if i2cdetect -y 1 2>/dev/null | grep -q ' 40'; then ok "PCA9685 на 0x40"; else warn "PCA9685 не найдена (ожидаемо, пока плата не подключена)"; fi
+# вывод сначала в переменную: с pipefail `… | grep -q` даёт SIGPIPE у i2cdetect и ложный «не найдена»
+i2c_map="$(i2cdetect -y 1 2>/dev/null)"
+if grep -q ' 40' <<<"$i2c_map"; then ok "PCA9685 на 0x40"; else warn "PCA9685 не найдена (ожидаемо, пока плата не подключена)"; fi
 
 echo "Права"
 for g in i2c input bluetooth; do
@@ -49,7 +53,8 @@ EOF
 else
   fail "API не отвечает на :$PORT"
 fi
-check "3D-модели отдаются" "curl -sf http://127.0.0.1:$PORT/models/manifest.json" "нет cad/web/manifest.json — портал покажет примитивы"
+check "CORS разрешён (портал открывается с ПК)" \
+  "curl -sf -o /dev/null -D - -H 'Origin: http://localhost:8000' http://127.0.0.1:$PORT/api/config | grep -qi '^access-control-allow-origin'"
 
 echo "Bluetooth"
 check "адаптер включён" "bluetoothctl show | grep -q 'Powered: yes'" "rfkill unblock bluetooth; sudo systemctl restart bluetooth"

@@ -210,7 +210,8 @@ export class Dog3D {
     for (const [name, leg] of Object.entries(this.legs)) {
       const hip = byId[`${name}_hip`], knee = byId[`${name}_knee`];
       if (hip) leg.hip.rotation.z = THREE.MathUtils.degToRad(hip.joint_current);
-      if (knee) leg.knee.rotation.z = THREE.MathUtils.degToRad(knee.joint_current);
+      // Угол колена — по корпусу голени; модель голени повёрнута по линии «колено → подошва».
+      if (knee) leg.knee.rotation.z = THREE.MathUtils.degToRad(knee.joint_current - (this.config.geometry.tibia_bend_deg ?? 0));
     }
     for (const m of this.markers) {
       const s = byId[m.userData.servo];
@@ -220,9 +221,18 @@ export class Dog3D {
       c.emissive.set(m.userData.servo === this.selected ? 0x554400 : 0x000000);
     }
 
-    this._settleOnFloor();
+    if (this.staticBody) this._hangOnStand(); else this._settleOnFloor();
     this.renderer.domElement.style.opacity = state.enabled ? 1 : 0.75;
   }
+
+  // Режим стенда: корпус неподвижно висит ровно, лапы не достают до пола — видно только работу ног.
+  _hangOnStand() {
+    const g = this.config.geometry;
+    this.body.quaternion.identity();
+    this.root.position.set(0, g.femur_mm + g.tibia_mm + 25, 0);
+  }
+
+  setStaticBody(on) { this.staticBody = on; }
 
   // Положение корпуса не берётся из команды, а вычисляется по углам суставов:
   // лапы (FK) в системе корпуса → плоскость опорных лап → корпус поворачивается так,
@@ -251,6 +261,32 @@ export class Dog3D {
   }
 
   select(id) { this.selected = id; }
+
+  // Плоскость рамы (низ средней перекладины, как FramePlane в FreeCAD). Узел колена держится
+  // ниже неё на запас из прошивки. Привязана к корпусу; уровень — мм от оси бедра (y = 0).
+  showFramePlane(visible) {
+    const info = this.config.frame_guard;
+    if (!info) return false;
+    if (!this.framePlane) {
+      const g = this.config.geometry;
+      const w = g.body_length_mm + 140, d = g.body_width_mm + 80;
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xf05b5b, transparent: true, opacity: 0.18,
+          side: THREE.DoubleSide, depthWrite: false }));
+      const edge = new THREE.LineSegments(
+        new THREE.EdgesGeometry(plane.geometry),
+        new THREE.LineDashedMaterial({ color: 0xd63b3b, dashSize: 6, gapSize: 4 }));
+      edge.computeLineDistances();
+      plane.add(edge);
+      plane.position.y = info.plane_mm;   // как FramePlane в FreeCAD: низ перекладины рамы
+      plane.renderOrder = 10;
+      this.body.add(plane);
+      this.framePlane = plane;
+    }
+    this.framePlane.visible = visible;
+    return true;
+  }
 
   _pick(e) {
     if (!this._pointerDown) return;

@@ -27,9 +27,9 @@ SRC = os.path.join(ROOT, "freecad", "EDOG_T_Front_Mark.FCStd")
 FIX = os.path.join(ROOT, "custom")
 
 # --- геометрия, снятая с моделей (см. docs) ---
-HIP_X = {"F": 115.38, "R": 16.40}           # оси бёдер по X в сборке
+HIP_X = {"F": 122.07, "R": 9.70}            # оси бёдер по X в сборке (серво бедра валом к краю рамы)
 SHAFT_TIP_Y = {"L": 101.42, "R": -31.50}    # торцы валов бёдер по Y
-HIP_Z = 4.07
+HIP_Z = -3.90
 CENTER = V((HIP_X["F"] + HIP_X["R"]) / 2, 34.96, HIP_Z)
 FEMUR = 50.0                                 # между отверстиями Femur_hub7
 FEMUR_THICK = 9.0
@@ -38,8 +38,8 @@ TIB_SHAFT = V(0, 11.5 - 5.2, 5.98)           # ось вала колена в �
 TIB_FOOT = V(0, 46.0, -6.7)                  # середина подошвы
 TIB_TIP_X = -14.0                            # торец вала колена (уши на грани X=0, вал в −X)
 TIB_FOOT_X = 5.1                             # середина подошвы по толщине голени
-MG90S_TIP = V(16.40, -31.50, 4.06)           # торец вала MG90S_LeftFront в сборке
-MG90S_EARS = V(13.05, 0, 0.10)               # центр ушей MG90S_LeftFront (X, Z)
+MG90S_TIP = V(9.70, -31.50, -3.89)           # торец вала MG90S_LeftFront в сборке
+MG90S_EARS = V(13.05, 0, 0.08)               # центр корпуса/ушей MG90S_LeftFront (X, Z)
 
 BODY_PARTS = {
     "body.stl": (["CylinderChassis"], "#e8e2d6"),

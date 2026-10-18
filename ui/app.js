@@ -18,22 +18,38 @@ const AXIS_LABELS = {
   ABS_Z: 'ось Z', ABS_RZ: 'ось RZ', ABS_HAT0Y: 'крестовина ↕', ABS_HAT0X: 'крестовина ↔',
 };
 
+// Адрес собаки (API на Raspberry Pi). Портал хостится отдельно, на ПК (ui/serve.py).
+// Порядок: ?dog=… в ссылке → сохранённый в браузере → edog.local:8080.
+const DOG_KEY = 'edog.dog';
+const DOG_HOST = (() => {
+  const fromUrl = new URLSearchParams(location.search).get('dog');
+  try {
+    if (fromUrl) localStorage.setItem(DOG_KEY, fromUrl);
+    return fromUrl || localStorage.getItem(DOG_KEY) || 'edog.local:8080';
+  } catch {
+    return fromUrl || 'edog.local:8080';
+  }
+})();
+const API = `http://${DOG_HOST}`;
+
 let config, state, ws, dog;
 let selected = null;
 let calibDirty = false;
+let lastStateAt = 0;  // когда пришло последнее состояние (для статуса связи)
+let showAllBt = false;
 const rows = {};
 
 // ---------- API ----------
 
 async function api(method, path, body) {
-  const r = await fetch(path, {
+  const r = await fetch(API + path, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    toast(typeof data.detail === 'string' ? data.detail : `Ошибка ${r.status}`);
+    toast(typeof data.detail === 'string' ? data.detail : `Ошибка ${r.status}`, 'error');
     throw new Error(r.status);
   }
   return data;
@@ -44,12 +60,14 @@ function send(msg) {
 }
 
 let toastTimer;
-function toast(text) {
+// Всплывающее сообщение сверху. Тип виден и без цвета: ⚠ — ошибка, ✓ — сообщение.
+function toast(text, kind = 'info') {
   const el = $('toast');
-  el.textContent = text;
+  el.textContent = `${kind === 'error' ? '⚠' : '✓'} ${text}`;
+  el.className = `toast ${kind}`;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 3000);
+  toastTimer = setTimeout(() => { el.hidden = true; }, kind === 'error' ? 6000 : 3000);
 }
 
 function throttle(fn, ms) {
@@ -65,15 +83,26 @@ function throttle(fn, ms) {
 // ---------- WebSocket ----------
 
 function connect() {
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-  ws.onopen = () => setPill('st-link', 'связь', 'ok');
-  ws.onclose = () => { setPill('st-link', 'нет связи', 'bad'); setTimeout(connect, 1000); };
+  ws = new WebSocket(`ws://${DOG_HOST}/ws`);
+  ws.onopen = () => renderLink();
+  ws.onclose = () => { renderLink(); setTimeout(connect, 1000); };
   ws.onmessage = e => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'state') render(msg);
-    else if (msg.type === 'error') toast(msg.message);
+    else if (msg.type === 'error') toast(msg.message, 'error');
   };
 }
+
+// Статус связи — текстом (не только цветом): «есть», «НЕТ», сколько секунд нет данных.
+function renderLink() {
+  const age = lastStateAt ? (Date.now() - lastStateAt) / 1000 : Infinity;
+  const ok = ws?.readyState === WebSocket.OPEN && age < 2;
+  setPill('st-link', ok ? 'Связь: есть' : '⚠ Связь: НЕТ', ok ? 'ok' : 'bad');
+  $('offline').hidden = ok;
+  $('offline-info').textContent = (Number.isFinite(age)
+    ? `данных нет ${Math.round(age)} с · переподключение…` : 'подключение…') + ` · адрес собаки: ${DOG_HOST}`;
+}
+setInterval(renderLink, 1000);
 
 function setPill(id, text, cls) {
   const el = $(id);
@@ -118,16 +147,22 @@ function buildStatic() {
 
 function render(s) {
   state = s;
+  lastStateAt = Date.now();
   dog?.update(s);
 
   $('torque').checked = s.enabled;
   for (const b of $('modes').children) b.classList.toggle('active', b.dataset.mode === s.mode);
   for (const b of $('poses').children) b.classList.toggle('active', config.poses[[...$('poses').children].indexOf(b)] === s.pose);
 
-  if (s.driver.error) setPill('st-driver', 'нет PCA9685', 'bad');
-  else setPill('st-driver', s.driver.kind === 'mock' ? 'заглушка' : 'PCA9685', s.driver.kind === 'mock' ? 'warn' : 'ok');
+  // Сервер: собака (настоящий Linux с evdev/Bluetooth) или ПК с заглушкой — чтобы не путать вкладки.
+  const onDog = !s.gamepad.unavailable;
+  setPill('st-server', onDog ? `Собака: ${DOG_HOST}` : `⚠ Собака: ${DOG_HOST} — ЭТО ЗАГЛУШКА НА ПК`, onDog ? 'ok' : 'warn');
+  if (s.driver.error) setPill('st-driver', '⚠ Плата: НЕТ PCA9685 (заглушка)', 'bad');
+  else if (s.driver.kind === 'mock') setPill('st-driver', '⚠ Плата: заглушка (без железа)', 'warn');
+  else setPill('st-driver', 'Плата: PCA9685 есть', 'ok');
   $('st-driver').title = s.driver.error ?? '';
-  setPill('st-pad', s.gamepad.connected ? 'геймпад' : 'нет геймпада', s.gamepad.connected ? 'ok' : '');
+  setPill('st-pad', s.gamepad.connected ? `Геймпад: ${s.gamepad.name}` : s.gamepad.unavailable ? '⚠ Геймпад: недоступен' : 'Геймпад: не подключён',
+    s.gamepad.connected ? 'ok' : s.gamepad.unavailable ? 'warn' : '');
   renderGamepad(s.gamepad);
 
   for (const [k, v] of Object.entries(s.body)) {
@@ -149,8 +184,9 @@ function render(s) {
     tr.classList.toggle('off', !sv.installed);
     cell('joint').textContent = sv.joint_current.toFixed(1);
     cell('current').textContent = sv.current.toFixed(1);
-    cell('target').textContent = sv.target.toFixed(1);
-    cell('target').classList.toggle('clamped', sv.clamped);
+    const marks = [sv.clamped && '⚠ предел', sv.frame_blocked && '⚠ упор в раму'].filter(Boolean).join(' ');
+    cell('target').textContent = marks ? `${sv.target.toFixed(1)} ${marks}` : sv.target.toFixed(1);
+    cell('target').classList.toggle('clamped', sv.clamped || sv.frame_blocked);
     cell('pulse').textContent = s.enabled && sv.installed ? sv.pulse_us : '—';
     cell('limits').textContent = `${sv.min_deg}…${sv.max_deg}`;
   }
@@ -158,7 +194,7 @@ function render(s) {
 }
 
 function renderGamepad(gp) {
-  const label = gp.connected ? 'подключён' : gp.unavailable ? 'недоступен' : 'не подключён';
+  const label = gp.connected ? 'подключён' : gp.unavailable ? '⚠ НЕДОСТУПЕН' : 'не подключён';
   setPill('gp-state', label, gp.connected ? 'ok' : gp.unavailable ? 'warn' : '');
   $('gp-kv').innerHTML = gp.connected
     ? `<span>Устройство</span><span>${gp.name}</span><span>Кнопка</span><span>${gp.last_button ?? '—'}</span>`
@@ -201,6 +237,8 @@ function renderDetail() {
     ['Сигнал', signal],
     ['zero / dir', `${sv.zero}° / ${sv.dir > 0 ? '+1' : '−1'}`],
     ['Пределы', `${sv.min_deg}° … ${sv.max_deg}°`],
+    ['Рама', !state.frame_guard ? '⚠ защита от упора выключена (нет leg_hull.json)'
+      : sv.frame_blocked ? '⚠ УПОР: колено дошло до плоскости рамы, дальше не пойдёт' : 'колено ниже плоскости рамы'],
   ].map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
   $('wz-zero-hint').textContent = sv.joint === 'hip'
     ? `бедро смотрело вертикально вниз (${sv.ref_deg}°)` : `голень стояла под ${sv.ref_deg}° к бедру`;
@@ -244,7 +282,12 @@ function bindControls() {
     .then(r => { calibDirty = false; toast(`Сохранено: ${r.saved}`); });
   $('sd-installed').onchange = e => setInstalled(selected, e.target.checked);
   for (const b of document.querySelectorAll('[data-delta]')) {
-    b.onclick = () => api('POST', `/api/servos/${selected}/test`, { action: 'nudge', delta: Number(b.dataset.delta) });
+    // Шаг по углу СУСТАВА (не серво): «+» — всегда к голове на любой ноге, а после
+    // «Инвертировать dir» серво закрутится в другую сторону — так проверка направления честная.
+    b.onclick = () => {
+      const sv = current();
+      api('PUT', `/api/servos/${selected}`, { joint: sv.joint_target + Number(b.dataset.delta) });
+    };
   }
   for (const b of document.querySelectorAll('[data-test]')) {
     b.onclick = () => api('POST', `/api/servos/${selected}/test`, { action: b.dataset.test });
@@ -291,8 +334,15 @@ async function scanBluetooth() {
   btn.disabled = true;
   $('bt-status').textContent = 'поиск…';
   try {
-    const { devices } = await api('GET', '/api/bluetooth/scan');
-    $('bt-status').textContent = devices.length ? '' : 'ничего не найдено';
+    const { devices: all } = await api('GET', '/api/bluetooth/scan');
+    // Безымянные BLE-устройства (имя = MAC) — соседские датчики и т.п.; геймпады имя передают.
+    const nameless = d => /^([0-9A-F]{2}[-:]){5}[0-9A-F]{2}$/i.test(d.name);
+    const devices = showAllBt ? all : all.filter(d => d.paired || !nameless(d));
+    const hidden = all.length - devices.length;
+    $('bt-status').textContent = !all.length ? 'ничего не найдено' : hidden ? `скрыто безымянных: ${hidden}` : '';
+    $('bt-status').onclick = hidden ? () => { showAllBt = true; scanBluetooth(); } : null;
+    $('bt-status').style.cursor = hidden ? 'pointer' : '';
+    $('bt-status').title = hidden ? 'Показать все' : '';
     $('bt-list').replaceChildren(...devices.map(d => {
       const li = document.createElement('li');
       li.innerHTML = `<span title="${d.mac}">${d.name}</span>`;
@@ -316,7 +366,7 @@ async function scanBluetooth() {
       return li;
     }));
   } catch {
-    $('bt-status').textContent = 'Bluetooth недоступен';
+    $('bt-status').textContent = `⚠ поиск не удался в ${new Date().toLocaleTimeString().slice(0, 5)} — повторите (сразу после загрузки Pi Bluetooth поднимается ~1 мин)`;
   } finally {
     btn.disabled = false;
   }
@@ -324,9 +374,55 @@ async function scanBluetooth() {
 
 // ---------- старт ----------
 
-config = await api('GET', '/api/config');
+// Собака может быть ещё не включена: ждём конфиг, не ломая страницу.
+async function loadConfig() {
+  for (;;) {
+    try {
+      const r = await fetch(API + '/api/config');
+      if (r.ok) return await r.json();
+    } catch { /* нет связи */ }
+    renderLink();
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
+$('dog-host').value = DOG_HOST;
+$('dog-form').onsubmit = e => {
+  e.preventDefault();
+  const host = $('dog-host').value.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  if (host) location.search = `?dog=${encodeURIComponent(host)}`;
+};
+renderLink();
+config = await loadConfig();
 buildStatic();
 bindControls();
 dog = new Dog3D($('scene'), config, { onPick: select });
 dog.loadModels().then(src => { $('scene').title = `Модель: ${src}`; });
+
+// Переключатель плоскости рамы; выбор запоминается в браузере.
+const PLANE_KEY = 'edog.showPlane';
+const planeBox = $('show-plane');
+try { planeBox.checked = localStorage.getItem(PLANE_KEY) === '1'; } catch { /* без хранилища */ }
+const applyPlane = () => {
+  const ok = dog.showFramePlane(planeBox.checked);
+  planeBox.disabled = !ok;
+  planeBox.parentElement.title = ok
+    ? `Низ перекладины рамы: ${config.frame_guard.plane_mm} мм от оси бедра. Узел колена держится ниже: до ${config.frame_guard.limit_mm} мм (запас)`
+    : 'Защита от упора в раму выключена на собаке (нет leg_hull.json)';
+};
+planeBox.onchange = () => {
+  try { localStorage.setItem(PLANE_KEY, planeBox.checked ? '1' : '0'); } catch { /* без хранилища */ }
+  applyPlane();
+};
+applyPlane();
+
+// Режим стенда: корпус висит неподвижно, двигаются только ноги. Выбор запоминается.
+const STAND_KEY = 'edog.staticBody';
+const standBox = $('static-body');
+try { standBox.checked = localStorage.getItem(STAND_KEY) === '1'; } catch { /* без хранилища */ }
+dog.setStaticBody(standBox.checked);
+standBox.onchange = () => {
+  try { localStorage.setItem(STAND_KEY, standBox.checked ? '1' : '0'); } catch { /* без хранилища */ }
+  dog.setStaticBody(standBox.checked);
+};
 connect();

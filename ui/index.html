@@ -13,9 +13,14 @@
 <header>
   <div class="brand">EDOG</div>
   <div class="status">
-    <span id="st-link" class="pill">нет связи</span>
-    <span id="st-driver" class="pill">драйвер</span>
-    <span id="st-pad" class="pill">геймпад</span>
+    <form id="dog-form" class="dog-form" title="Адрес API собаки (Raspberry Pi)">
+      <label>Собака <input id="dog-host" placeholder="192.168.50.129:8080" spellcheck="false"></label>
+      <button>Подключить</button>
+    </form>
+    <span id="st-server" class="pill">Собака: …</span>
+    <span id="st-link" class="pill">Связь: …</span>
+    <span id="st-driver" class="pill">Плата: …</span>
+    <span id="st-pad" class="pill">Геймпад: …</span>
   </div>
   <div class="header-actions">
     <label class="switch" title="Подать/снять сигнал с серво">
@@ -29,6 +34,15 @@
   <section class="viewer">
     <div id="scene"></div>
     <div class="overlay" id="overlay"></div>
+    <div class="viewer-toggles">
+      <label class="viewer-toggle" title="Низ средней перекладины рамы: узел колена держится ниже неё на запас">
+        <input type="checkbox" id="show-plane"> Плоскость рамы
+      </label>
+      <label class="viewer-toggle" title="Корпус неподвижно висит в воздухе, двигаются только ноги">
+        <input type="checkbox" id="static-body"> Тело на стенде
+      </label>
+    </div>
+    <div class="offline" id="offline" hidden>⚠ НЕТ СВЯЗИ С СОБАКОЙ<small id="offline-info">переподключение…</small></div>
     <div class="hint">Вращать — мышь/палец, клик по суставу — выбрать серво</div>
   </section>
 
@@ -150,7 +164,7 @@
         <li>После первого сопряжения геймпад подключается сам: достаточно нажать на нём кнопку питания.</li>
         <li>Статус вверху станет зелёным. Нажмите <b>Start</b>, чтобы подать сигнал на серво, затем <b>A / ✕</b> — стойка.</li>
       </ol>
-      <p class="muted">Без портала то же самое делает <code>firmware/os/pair-gamepad.sh</code> по SSH.
+      <p class="muted">Без портала то же самое можно сделать по SSH: <code>firmware/os/pair-gamepad.sh</code>.
         Если стики перепутаны — проверьте коды в <code>evtest</code> и поправьте <code>[gamepad.axes]</code> в config.toml.
         При потере связи собака останавливается и выравнивает корпус, поза сохраняется.</p>
     </details>

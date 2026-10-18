@@ -12,7 +12,8 @@ cad/
   custom/        — финальные STL для печати (описание — cad/custom/README.md)
     tests/         — тестовые вставки для проверки посадок
   web/           — облегчённые модели и manifest.json для 3D в веб-портале (выгружает export_web_models.py)
-firmware/      — сервис для Raspberry Pi: серво, геймпад, API, веб-портал (см. firmware/README.md)
+firmware/      — сервис для Raspberry Pi: серво, геймпад, API (см. firmware/README.md)
+ui/            — веб-портал с 3D-моделью, запускается на ПК: python ui/serve.py
 docs/          — обсуждение идей, решения, заметки по железу
 ```
 

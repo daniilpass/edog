@@ -1,20 +1,18 @@
-"""REST + WebSocket API и раздача веб-портала."""
+"""REST + WebSocket API. Веб-портал хостится отдельно (ui/ в корне репозитория), на Pi — только API."""
 
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from . import bluetooth
 
 log = logging.getLogger(__name__)
 
-WEB_DIR = Path(__file__).parent / "web"
 STATE_HZ = 20
 
 
@@ -63,8 +61,11 @@ class CalibrateReq(BaseModel):
     joint: float = Field(..., description="угол сустава, который нога физически показывает сейчас")
 
 
-def create_app(robot, models_dir: Path | None = None) -> tuple[FastAPI, callable]:
-    app = FastAPI(title="EDOG", version="0.1")
+def create_app(robot) -> tuple[FastAPI, callable]:
+    app = FastAPI(title="EDOG", version="0.2")
+    # Портал открывается с другого адреса (ПК), поэтому API доступно с любого origin.
+    # Авторизации нет: рассчитано на домашнюю сеть.
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     clients: set[WebSocket] = set()
 
     def servo_call(fn, *args, **kwargs):
@@ -75,6 +76,11 @@ def create_app(robot, models_dir: Path | None = None) -> tuple[FastAPI, callable
         except ValueError as e:
             raise HTTPException(400, str(e))
         return robot.state()
+
+    @app.get("/")
+    def root():
+        return {"service": "edog", "api": "/api", "docs": "/docs", "ws": "/ws",
+                "ui": "портал запускается на ПК: python ui/serve.py"}
 
     @app.get("/api/config")
     def get_config():
@@ -186,7 +192,4 @@ def create_app(robot, models_dir: Path | None = None) -> tuple[FastAPI, callable
                 except Exception:
                     clients.discard(socket)
 
-    if models_dir and models_dir.is_dir():
-        app.mount("/models", StaticFiles(directory=models_dir), name="models")
-    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
     return app, broadcast

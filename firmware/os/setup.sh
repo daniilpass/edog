@@ -58,7 +58,7 @@ sudo -u "$RUN_USER" "$VENV/bin/pip" install -r "$FIRMWARE_DIR/requirements.txt"
 echo "==> systemd: edog.service"
 cat > /etc/systemd/system/edog.service <<EOF
 [Unit]
-Description=EDOG robot (servo control, gamepad, web portal)
+Description=EDOG robot API (servo control, gamepad)
 After=network-online.target bluetooth.target
 Wants=network-online.target
 
@@ -83,7 +83,8 @@ systemctl restart edog.service
 
 HOST="$(hostname)"
 echo
-echo "Готово. Портал: http://$HOST.local:8080/"
+echo "Готово. API: http://$HOST.local:8080/docs"
+echo "Портал запускается на ПК: python ui/serve.py → http://localhost:8000/?dog=$HOST.local:8080"
 echo "I²C-шина: i2cdetect -y 1 (PCA9685 = 0x40)"
 echo "Логи: journalctl -u edog -f"
 echo "Если I²C включился впервые — перезагрузите: sudo reboot"

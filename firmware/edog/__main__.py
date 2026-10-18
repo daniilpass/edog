@@ -15,11 +15,10 @@ from .robot import Robot
 
 ROOT = Path(__file__).resolve().parent.parent          # firmware/
 DEFAULT_CONFIG = ROOT / "config" / "config.toml"
-DEFAULT_MODELS = ROOT.parent / "cad" / "web"           # 3D-модели для портала
 
 
-async def serve(cfg, robot, models_dir: Path) -> None:
-    app, broadcast = create_app(robot, models_dir)
+async def serve(cfg, robot) -> None:
+    app, broadcast = create_app(robot)
     server = uvicorn.Server(uvicorn.Config(
         app, host=cfg.server.get("host", "0.0.0.0"), port=cfg.server.get("port", 8080),
         log_level="warning",
@@ -37,7 +36,6 @@ async def serve(cfg, robot, models_dir: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(prog="edog")
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    ap.add_argument("--models", type=Path, default=DEFAULT_MODELS)
     ap.add_argument("--mock", action="store_true", help="без PCA9685")
     ap.add_argument("--port", type=int)
     args = ap.parse_args()
@@ -50,8 +48,8 @@ def main() -> None:
         cfg.server["port"] = args.port
     driver, error = make_driver(cfg.driver)
     robot = Robot(cfg, driver, error)
-    logging.getLogger("edog").info("портал: http://<хост>:%s/", cfg.server.get("port", 8080))
-    asyncio.run(serve(cfg, robot, args.models))
+    logging.getLogger("edog").info("API: http://<хост>:%s/api, документация /docs", cfg.server.get("port", 8080))
+    asyncio.run(serve(cfg, robot))
 
 
 if __name__ == "__main__":

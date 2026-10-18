@@ -157,8 +157,98 @@ def test_tilted_stance_feet_are_coplanar(robot):
     for name, leg in robot.legs.items():
         hip = robot.servos[f"{name}_hip"]
         knee = robot.servos[f"{name}_knee"]
-        _, (fx, fz) = fk(hip.servo_to_joint(hip.target), knee.servo_to_joint(knee.target), g["femur_mm"], g["tibia_mm"])
+        _, (fx, fz) = fk(hip.servo_to_joint(hip.target), knee.servo_to_joint(knee.target),
+                         g["femur_mm"], g["tibia_mm"], g["tibia_bend_deg"])
         side = 1 if leg.side == "left" else -1
         hip_b = (leg.x_mm, side * g["body_width_mm"] / 2, 0.0)
         world = _world_foot((fx, fz), hip_b, robot.body.height, 15, 6)
         assert world[2] == pytest.approx(0, abs=0.5), name
+
+
+def test_api_only_with_cors(robot):
+    """На Pi только API: портала и моделей нет, CORS разрешает портал с ПК."""
+    from fastapi.testclient import TestClient
+    from edog.api import create_app
+
+    app, _ = create_app(robot)
+    client = TestClient(app)
+    r = client.get("/api/config", headers={"Origin": "http://localhost:8000"})
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] in ("*", "http://localhost:8000")
+    pre = client.options("/api/pose/sit", headers={
+        "Origin": "http://localhost:8000", "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type"})
+    assert pre.status_code == 200
+    assert client.get("/index.html").status_code == 404
+    assert client.get("/models/manifest.json").status_code == 404
+    assert client.get("/").json()["docs"] == "/docs"
+
+
+@pytest.mark.parametrize("bend", [0, 17.7, -10])
+def test_ik_fk_with_tibia_bend(bend):
+    """Угол колена — по корпусу голени: изгиб меняет угол, но не положение лапы."""
+    hip, knee = ik(5, 65, 50, 41.7, -1, bend)
+    hip0, knee0 = ik(5, 65, 50, 41.7, -1, 0)
+    assert hip == pytest.approx(hip0) and knee == pytest.approx(knee0 + bend)
+    _, foot = fk(hip, knee, 50, 41.7, bend)
+    assert foot == pytest.approx((5, 65), abs=1e-6)
+
+
+def test_mount_pose_is_servo_center(robot):
+    """Посадка крыльев при серво 90°: бедро 0° (вниз), колено 90° (корпус голени ⟂ бедру)."""
+    for s in robot.servos.values():
+        assert s.servo_to_joint(90) == pytest.approx(s.cfg.ref_deg)
+
+
+def test_all_poses_within_servo_limits(robot):
+    for name in robot.poses():
+        robot.set_pose(name)
+        robot.step(0.02)
+        clamped = [s.cfg.id for s in robot.servos.values() if s.clamped]
+        assert not clamped, (name, clamped)
+
+
+@pytest.fixture
+def guarded(robot):
+    from edog.collision import FrameGuard
+    robot.guard = FrameGuard(CONFIG.with_name("leg_hull.json"), robot.g["tibia_bend_deg"], robot.g["frame_margin_mm"])
+    return robot
+
+
+def test_frame_guard_allows_all_poses_and_walk(guarded):
+    r = guarded
+    r.set_enabled(True)
+    for name in r.poses():
+        r.set_pose(name)
+        for _ in range(100):
+            r.step(0.02)
+        assert not any(r.blocked.values()), name
+    r.set_pose("stand"); r.set_mode("walk")
+    for _ in range(200):
+        r.set_web_drive(1, 0); r.step(0.02)
+        assert not any(r.blocked.values())
+
+
+def test_frame_guard_rejects_manual_command(guarded):
+    r = guarded
+    r.set_servo("RL_hip", joint=45)
+    r.step(0.02)
+    with pytest.raises(ValueError, match="раму"):
+        r.set_servo("RL_knee", joint=150)
+    r.set_servo("RL_knee", joint=60)          # вниз от рамы — можно
+
+
+def test_frame_guard_stops_sweep_at_frame(guarded):
+    r = guarded
+    r.set_enabled(True)
+    r.set_servo("RL_hip", joint=30)
+    r.set_servo("RL_knee", joint=60)
+    for _ in range(200):
+        r.step(0.02)
+    r.test_servo("RL_knee", "sweep")
+    for _ in range(1000):
+        r.step(0.02)
+        assert r.guard.top(*r._leg_joints("RL", "current")) <= r.guard.limit + 1e-6
+    knee = r.servos["RL_knee"]
+    assert not knee.queue                      # проход остановлен у рамы
+    assert knee.servo_to_joint(knee.current) < 140

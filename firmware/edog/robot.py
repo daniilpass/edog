@@ -6,6 +6,7 @@ import time
 from dataclasses import asdict, dataclass
 from math import pi, sin
 
+from .collision import FrameGuard
 from .config import Config, save_calibration
 from .kinematics import foot_in_leg, ik
 
@@ -56,6 +57,7 @@ class Servo:
             "installed": c.installed, "sweeping": bool(self.queue),
             "ref_deg": c.ref_deg, "zero": c.zero, "dir": c.dir, "min_deg": c.min_deg, "max_deg": c.max_deg,
             "clamped": self.clamped,
+            "frame_blocked": False,   # заполняет Robot.state()
         }
 
 
@@ -86,6 +88,15 @@ class Robot:
         self.web_drive_t = 0.0
         self.phase = 0.0
         self.gamepad = {"connected": False, "name": None}
+
+        # Узел колена не поднимается выше плоскости рамы (см. collision.py).
+        hull = cfg.path.with_name("leg_hull.json")
+        self.guard = None
+        if hull.exists():
+            self.guard = FrameGuard(hull, self.g.get("tibia_bend_deg", 0.0), self.g.get("frame_margin_mm", 3.0))
+        else:
+            log.warning("нет %s — защита от упора колена в раму отключена", hull)
+        self.blocked = {name: False for name in self.legs}   # нога остановлена у рамы
 
         self._update_targets(0.0)
         for s in self.servos.values():
@@ -159,11 +170,23 @@ class Robot:
         self.web_drive = (clamp(vx, -1, 1), clamp(turn, -1, 1))
         self.web_drive_t = time.monotonic()
 
+    def _leg_joints(self, leg: str, attr: str = "target") -> tuple[float, float]:
+        hip, knee = self.servos[f"{leg}_hip"], self.servos[f"{leg}_knee"]
+        return hip.servo_to_joint(getattr(hip, attr)), knee.servo_to_joint(getattr(knee, attr))
+
     def set_servo(self, sid: str, angle: float | None = None, joint: float | None = None) -> None:
         s = self.servos[sid]
+        servo_deg = angle if angle is not None else s.joint_to_servo(joint)
+        if self.guard:
+            c = s.cfg
+            old = self._leg_joints(c.leg)
+            j = s.servo_to_joint(clamp(servo_deg, c.min_deg, c.max_deg))
+            new = (j, old[1]) if c.joint == "hip" else (old[0], j)
+            if not self.guard.allows_move(old, new):
+                raise ValueError(f"{c.id}: колено упрётся в раму (бедро {new[0]:.0f}°, колено {new[1]:.0f}°)")
         self.mode = "manual"
         s.queue.clear()
-        s.set_target(angle if angle is not None else s.joint_to_servo(joint))
+        s.set_target(servo_deg)
 
     def nudge(self, sid: str, delta: float) -> None:
         s = self.servos[sid]
@@ -259,7 +282,8 @@ class Robot:
             return
         for name, (x, z) in self.feet(dt).items():
             leg = self.legs[name]
-            hip, knee = ik(x, z, self.g["femur_mm"], self.g["tibia_mm"], leg.knee_dir)
+            hip, knee = ik(x, z, self.g["femur_mm"], self.g["tibia_mm"], leg.knee_dir,
+                           self.g.get("tibia_bend_deg", 0.0))
             for joint, angle in (("hip", hip), ("knee", knee)):
                 s = self.servos[f"{name}_{joint}"]
                 s.set_target(s.joint_to_servo(angle))
@@ -272,6 +296,7 @@ class Robot:
 
     def step(self, dt: float) -> None:
         self._update_targets(dt)
+        before = {name: self._leg_joints(name, "current") for name in self.legs}
         for s in self.servos.values():
             if not self.enabled:
                 s.current = s.target
@@ -281,8 +306,26 @@ class Robot:
             s.current += clamp(s.target - s.current, -speed * dt, speed * dt)
             if s.queue and abs(s.target - s.current) < 1e-6:
                 s.set_target(s.queue.pop(0))
+        self._guard_legs(before)
         if self.enabled:
             self._write()
+
+    def _guard_legs(self, before: dict[str, tuple[float, float]]) -> None:
+        """Шаг, поднимающий узел колена выше рамы, отменяется: нога стоит, где стояла.
+        Опускаться (уходить от рамы) можно всегда."""
+        if not self.guard:
+            return
+        for name in self.legs:
+            new = self._leg_joints(name, "current")
+            blocked = not self.guard.allows_move(before[name], new)
+            if blocked:
+                for joint, angle in zip(("hip", "knee"), before[name]):
+                    s = self.servos[f"{name}_{joint}"]
+                    s.current = s.target = s.joint_to_servo(angle)
+                    s.queue.clear()
+                if not self.blocked[name]:
+                    log.warning("нога %s остановлена: колено упрётся в раму", name)
+            self.blocked[name] = blocked
 
     async def run(self) -> None:
         period = 1.0 / self.m["loop_hz"]
@@ -317,6 +360,9 @@ class Robot:
                        "roll": self.m.get("max_roll_deg", self.m["max_tilt_deg"])},
             "gamepad": {"axes": self.cfg.gamepad.get("axes", {}),
                         "buttons": self.cfg.gamepad.get("buttons", {})},
+            # плоскость рамы, мм от оси бедра (вверх +): plane — низ перекладины, limit — с запасом
+            "frame_guard": None if not self.guard else {
+                "plane_mm": round(self.guard.frame_bottom, 2), "limit_mm": round(self.guard.limit, 2)},
         }
 
     def state(self) -> dict:
@@ -331,5 +377,6 @@ class Robot:
             "drive": {"vx": vx, "turn": turn, "source": source},
             "gamepad": self.gamepad,
             "driver": {"kind": self.driver.kind, "error": self.driver_error},
-            "servos": [s.state() for s in self.servos.values()],
+            "servos": [{**s.state(), "frame_blocked": self.blocked[s.cfg.leg]} for s in self.servos.values()],
+            "frame_guard": self.guard is not None,
         }

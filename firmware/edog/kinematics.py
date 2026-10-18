@@ -2,7 +2,12 @@
 
 Система координат ноги: начало — ось бедра, x — вперёд, z — вниз (мм).
 hip: 0° — бедро вертикально вниз, + — к x+.
-knee: 0° — голень на одной линии с бедром, + — голень поворачивается к x+.
+knee: угол между бедром и КОРПУСОМ голени (как видно на собранной ноге):
+      0° — корпус голени на одной линии с бедром, + — голень поворачивается к x+.
+
+Голень изогнута: линия «ось колена → подошва» повёрнута относительно корпуса голени
+на bend_deg (Tibia_v2: 17.7°, лапа загнута назад). Расчёт положения лапы идёт по этой линии,
+поэтому ik/fk переводят угол колена с учётом bend_deg; снаружи везде угол по корпусу.
 """
 
 from math import acos, atan2, cos, degrees, hypot, pi, radians, sin
@@ -12,13 +17,15 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-def ik(x: float, z: float, femur: float, tibia: float, knee_dir: int = -1) -> tuple[float, float]:
-    """Положение лапы → (hip°, knee°). Недостижимые точки прижимаются к границе досягаемости."""
+def ik(x: float, z: float, femur: float, tibia: float, knee_dir: int = -1,
+       bend_deg: float = 0.0) -> tuple[float, float]:
+    """Положение лапы → (hip°, knee°). knee — по корпусу голени. tibia — ось колена → подошва.
+    Недостижимые точки прижимаются к границе досягаемости."""
     d = _clamp(hypot(x, z), abs(femur - tibia) + 1e-3, femur + tibia - 1e-3)
     alpha = atan2(x, z)
     gamma = acos(_clamp((femur ** 2 + d ** 2 - tibia ** 2) / (2 * femur * d), -1, 1))
     bend = pi - acos(_clamp((femur ** 2 + tibia ** 2 - d ** 2) / (2 * femur * tibia), -1, 1))
-    return degrees(alpha + knee_dir * gamma), degrees(-knee_dir * bend)
+    return degrees(alpha + knee_dir * gamma), degrees(-knee_dir * bend) + bend_deg
 
 
 def body_rotation(pitch_deg: float, roll_deg: float):
@@ -54,10 +61,10 @@ def foot_in_leg(foot_w, hip_b, height: float, pitch_deg: float, roll_deg: float)
     return x, z, lateral
 
 
-def fk(hip_deg: float, knee_deg: float, femur: float, tibia: float):
-    """(hip°, knee°) → (колено, лапа) в координатах ноги."""
+def fk(hip_deg: float, knee_deg: float, femur: float, tibia: float, bend_deg: float = 0.0):
+    """(hip°, knee° по корпусу голени) → (колено, лапа) в координатах ноги."""
     a1 = radians(hip_deg)
-    a2 = a1 + radians(knee_deg)
+    a2 = a1 + radians(knee_deg - bend_deg)
     knee = (femur * sin(a1), femur * cos(a1))
     foot = (knee[0] + tibia * sin(a2), knee[1] + tibia * cos(a2))
     return knee, foot

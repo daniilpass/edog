@@ -3,7 +3,9 @@
 Один сервис `edog` на Python:
 - управляет 8 серво через PCA9685 (I²C);
 - принимает Bluetooth-геймпад;
-- отдаёт REST/WebSocket API и веб-портал с 3D-моделью собаки.
+- отдаёт REST/WebSocket API.
+
+На Pi работает только API. Веб-портал с 3D-моделью лежит в [`ui/`](../ui/) и запускается на ПК (см. «Портал» ниже).
 
 ```
 edog/            код сервиса
@@ -13,7 +15,6 @@ edog/            код сервиса
   gamepad.py     геймпад (evdev)
   bluetooth.py   сопряжение через bluetoothctl
   api.py         REST + WebSocket
-  web/           портал (three.js лежит в web/vendor, интернет не нужен)
 config/
   config.toml       железо, геометрия, раскладка геймпада (правится руками)
   calibration.json  калибровка серво (пишет портал)
@@ -22,7 +23,17 @@ os/
   pair-gamepad.sh   сопряжение геймпада по SSH
 ```
 
-3D-модели для портала лежат в [`cad/web/`](../cad/web/), их выгружает `cad/web/export_web_models.py` из FreeCAD. Если манифеста нет, собака рисуется примитивами.
+## Портал (на ПК)
+
+```bash
+python ui/serve.py            # http://localhost:8000/
+python ui/serve.py --lan      # плюс доступ с телефона в той же сети
+```
+
+- **Адрес собаки** вводится в поле «Собака» в шапке, например `192.168.50.129:8080`, или передаётся ссылкой `?dog=…`. Браузер его запоминает.
+- **Модели** портал берёт из [`cad/web/`](../cad/web/), их выгружает `cad/web/export_web_models.py` из FreeCAD. Если манифеста нет, собака рисуется примитивами.
+- **Зависимостей нет**: нужен только Python, three.js лежит в `ui/vendor`, интернет не нужен.
+- **Статусы в шапке** текстом: к какой собаке подключён портал, есть ли связь, PCA9685 и геймпад. При обрыве связи поверх модели появляется «НЕТ СВЯЗИ С СОБАКОЙ».
 
 ## Установка на Raspberry Pi
 
@@ -35,7 +46,7 @@ os/
    ```bash
    firmware/os/deploy.sh <user>@edog.local
    ```
-   На Pi попадают только `firmware/` (без тестов) и `cad/web/`, около 1 МБ. Репозиторий и исходники CAD на Pi не нужны.
+   На Pi попадает только `firmware/` (без тестов), меньше 1 МБ. Репозиторий, портал и CAD на Pi не нужны.
 3. На Pi запустить настройку и перезагрузиться:
    ```bash
    ssh <user>@edog.local
@@ -43,7 +54,7 @@ os/
    sudo reboot
    ```
    Скрипт включает I²C на 400 кГц и настраивает Bluetooth. Затем он ставит зависимости в `firmware/.venv` и регистрирует сервис `edog`, который стартует при загрузке.
-4. Открыть портал: **http://edog.local:8080/**
+4. На ПК запустить портал (`python ui/serve.py`) и указать адрес собаки. Документация API: **http://edog.local:8080/docs**
 
 Проверки:
 ```bash
@@ -52,7 +63,7 @@ journalctl -u edog -f     # логи сервиса
 sudo systemctl restart edog
 ```
 
-Обновление кода — с ПК: `firmware/os/deploy.sh`. Скрипт заменит код и модели, перезапустит сервис и не тронет venv и `calibration.json`.
+Обновление кода — с ПК: `firmware/os/deploy.sh`. Скрипт заменит код, перезапустит сервис и не тронет venv и `calibration.json`.
 
 ## Проверка без PCA9685 и серво
 
@@ -106,7 +117,7 @@ sudo systemctl restart edog
 
 ## API
 
-Без авторизации: портал рассчитан на домашнюю сеть. Документация Swagger — `/docs`.
+Без авторизации, CORS открыт для любого адреса: рассчитано на домашнюю сеть. Документация Swagger — `/docs`.
 
 | Метод | Путь | Что делает |
 |---|---|---|
@@ -137,6 +148,7 @@ Id серво: `FL_hip`, `FL_knee`, `FR_hip`, … Углы суставов:
 cd firmware
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt pytest   # Linux: .venv/bin/pip
-.venv/Scripts/python -m edog --mock                     # http://localhost:8080/
+.venv/Scripts/python -m edog --mock                     # API на http://localhost:8080/
+python ../ui/serve.py                                   # портал: http://localhost:8000/?dog=localhost:8080
 .venv/Scripts/python -m pytest
 ```
