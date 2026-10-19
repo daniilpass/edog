@@ -281,11 +281,10 @@ def test_power_limit_blocks_enable_and_lowering(robot):
     assert not robot.enabled
 
 
-def test_power_saved_without_servo_calibration(robot):
+def test_power_saved_with_calibration(robot):
     robot.update_power(limit_a=8.0)
-    robot.servos["FL_hip"].cfg.zero = 12.0             # не сохранено — в файл не попадает
-    data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
-    assert data == {"power": {"limit_a": 8.0, "servo_a": 0.9}}
+    assert not robot.cfg.calibration_path.exists()     # применено, но не сохранено
+    robot.servos["FL_hip"].cfg.zero = 12.0
     robot.save_calibration()
     data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
-    assert data["power"]["limit_a"] == 8.0 and data["FL_hip"]["zero"] == 12.0
+    assert data["power"] == {"limit_a": 8.0, "servo_a": 0.9} and data["FL_hip"]["zero"] == 12.0

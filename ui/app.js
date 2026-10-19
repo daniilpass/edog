@@ -177,6 +177,7 @@ function render(s) {
   $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', walk: 'ходьба', manual: 'ручной' }[s.mode]}`;
 
   renderPower(s.power);
+  $('cal-dirty').textContent = calibDirty ? '⚠ есть несохранённые изменения' : 'всё сохранено';
   const full = powerFull(s.power);
   for (const sv of s.servos) {
     const tr = rows[sv.id];
@@ -200,14 +201,18 @@ function render(s) {
 // Лимит тока: подключить можно не больше max_servos приводов (null — без ограничения).
 const powerFull = p => p.max_servos !== null && p.installed >= p.max_servos;
 
+// Поля не перезаписываются состоянием, пока введённое значение не применено.
+let powerDirty = false;
+
 function renderPower(p) {
-  for (const [id, k] of [['pw-limit', 'limit_a'], ['pw-servo', 'servo_a']]) {
-    if (document.activeElement !== $(id)) $(id).value = p[k];
+  if (!powerDirty) {
+    $('pw-limit').value = p.limit_a;
+    $('pw-servo').value = p.servo_a;
   }
-  $('pw-info').textContent = p.max_servos === null
+  $('pw-info').textContent = (powerDirty ? '⚠ не применено · ' : '') + (p.max_servos === null
     ? `Без ограничения (лимит 0). Подключено ${p.installed} серво, в пике до ${(p.installed * p.servo_a).toFixed(1)} А.`
     : `Подключено ${p.installed} из ${p.max_servos} возможных · в пике до ${(p.installed * p.servo_a).toFixed(1)} А из ${p.limit_a} А`
-      + (powerFull(p) ? ' · ⚠ лимит исчерпан' : '');
+      + (powerFull(p) ? ' · ⚠ лимит исчерпан' : ''));
 }
 
 function renderGamepad(gp) {
@@ -264,7 +269,6 @@ function renderDetail() {
     ? 'бедро должно качнуться вперёд, к голове' : 'голень должна повернуться вперёд, к голове';
   $('sd-sweep').textContent = sv.sweeping ? 'Остановить проход' : 'Проход по ходу';
   $('sd-sweep').dataset.test = sv.sweeping ? 'stop' : 'sweep';
-  $('cal-dirty').textContent = calibDirty ? 'есть несохранённые изменения' : '';
   const slider = $('sd-angle');
   Object.assign(slider, { min: sv.min_deg, max: sv.max_deg });
   if (document.activeElement !== slider) slider.value = sv.target;
@@ -339,9 +343,14 @@ function bindControls() {
   addEventListener('keyup', e => release(e.code));
   addEventListener('blur', () => { for (const k of [...held.keys()]) release(k); });
 
-  $('pw-apply').onclick = () => api('PATCH', '/api/power', {
+  const applyPower = () => api('PATCH', '/api/power', {
     limit_a: Number($('pw-limit').value), servo_a: Number($('pw-servo').value),
-  }).then(s => toast(`Лимит тока сохранён: ${s.power.limit_a} А`));
+  }).then(s => { powerDirty = false; calibDirty = true; toast(`Лимит тока: ${s.power.limit_a} А (не забудьте сохранить)`); });
+  $('pw-apply').onclick = applyPower;
+  for (const id of ['pw-limit', 'pw-servo']) {
+    $(id).oninput = () => { powerDirty = true; };
+    $(id).onkeydown = e => { if (e.key === 'Enter') applyPower(); };
+  }
 
   $('bt-scan').onclick = scanBluetooth;
 }

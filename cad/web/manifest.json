@@ -5,7 +5,16 @@
   "geometry": {
     "femur_mm": 50.0,
     "tibia_mm": 41.7,
-    "foot_inset_mm": 19.1
+    "foot_inset_mm": 19.1,
+    "foot_tip_mm": [
+      -0.69,
+      -44.63,
+      19.38
+    ],
+    "foot_pad_mm": [
+      10.0,
+      5.0
+    ]
   },
   "hips": {
     "FL": [
@@ -83,6 +92,14 @@
       "color": "#2b4fa8"
     },
     {
+      "file": "foot_pad_FL.stl",
+      "attach": "knee",
+      "legs": [
+        "FL"
+      ],
+      "color": "#2a2a2a"
+    },
+    {
       "file": "femur_FR.stl",
       "attach": "hip",
       "legs": [
@@ -113,6 +130,14 @@
         "FR"
       ],
       "color": "#2b4fa8"
+    },
+    {
+      "file": "foot_pad_FR.stl",
+      "attach": "knee",
+      "legs": [
+        "FR"
+      ],
+      "color": "#2a2a2a"
     },
     {
       "file": "femur_RL.stl",
@@ -147,6 +172,14 @@
       "color": "#2b4fa8"
     },
     {
+      "file": "foot_pad_RL.stl",
+      "attach": "knee",
+      "legs": [
+        "RL"
+      ],
+      "color": "#2a2a2a"
+    },
+    {
       "file": "femur_RR.stl",
       "attach": "hip",
       "legs": [
@@ -177,6 +210,14 @@
         "RR"
       ],
       "color": "#2b4fa8"
+    },
+    {
+      "file": "foot_pad_RR.stl",
+      "attach": "knee",
+      "legs": [
+        "RR"
+      ],
+      "color": "#2a2a2a"
     }
   ]
 }

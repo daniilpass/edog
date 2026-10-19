@@ -38,6 +38,11 @@ TIB_SHAFT = V(0, 11.5 - 5.2, 5.98)           # ось вала колена в �
 TIB_FOOT = V(0, 46.0, -6.7)                  # середина подошвы
 TIB_TIP_X = -14.0                            # торец вала колена (уши на грани X=0, вал в −X)
 TIB_FOOT_X = 5.1                             # середина подошвы по толщине голени
+SOLE_N = V(0, 0.847, -0.532)                 # наружная нормаль подошвы в файле голени
+SOLE_U = V(0, 0.532, 0.847)                  # вдоль подошвы
+POCKET = (5.375, 18.86, 40.55)               # центр дна углубления 10.75×11.5×2 под стоппер: X, по U, по N
+PAD_D, PAD_H = 10.0, 5.0                     # резиновый стоппер Ø10×5 (полусфера)
+PAD_COLOR = "#2a2a2a"
 MG90S_TIP = V(9.70, -31.50, -3.89)           # торец вала MG90S_LeftFront в сборке
 MG90S_EARS = V(13.05, 0, 0.08)               # центр корпуса/ушей MG90S_LeftFront (X, Z)
 
@@ -116,6 +121,16 @@ def leg_matrices(leg):
     return P, K, femur, tibia, knee_servo
 
 
+def foot_pad():
+    """Резиновый стоппер в углублении подошвы (в координатах файла голени)."""
+    n = V(SOLE_N); n.normalize()
+    u = V(SOLE_U); u.normalize()
+    x, along, depth = POCKET
+    base = V(x, 0, 0) + u * along + n * depth
+    pad = Part.makeSphere(PAD_D / 2, base, n, 0, 90)   # Ø10×5 — ровно полусфера R5
+    return shape_mesh(pad), base + n * PAD_H
+
+
 def joint_frame(point):
     """сборка → система сустава в портале (оси портала, начало в суставе)"""
     s = to_scene(point)
@@ -140,7 +155,8 @@ def main():
     femur_mesh = Mesh.Mesh(os.path.join(FIX, "Femur_hub7.stl"))
     tibia_mesh = Mesh.Mesh(os.path.join(FIX, "Tibia_v2_SG90_fit.stl"))
     insert_mesh = Mesh.Mesh(os.path.join(FIX, "Tibia_v2_SG90_fit_insert.stl"))
-    tibia_len = None
+    pad_mesh, pad_tip = foot_pad()
+    tibia_len = foot_tip = None
     for leg in ("FL", "FR", "RL", "RR"):
         P, K, femur, tibia, knee_servo = leg_matrices(leg)
         hip_f, knee_f = joint_frame(P), joint_frame(K)
@@ -153,16 +169,21 @@ def main():
             {"file": write(insert_mesh, f"tibia_insert_{leg}.stl", knee_f * tibia), "attach": "knee", "legs": [leg], "color": color},
             {"file": write(ref_servo, f"knee_servo_{leg}.stl", knee_f * knee_servo),
              "attach": "knee", "legs": [leg], "color": SERVO_COLOR},
+            {"file": write(pad_mesh, f"foot_pad_{leg}.stl", knee_f * tibia), "attach": "knee", "legs": [leg], "color": PAD_COLOR},
         ]
         foot = (knee_f * tibia).multVec(TIB_FOOT)
         tibia_len = round(math.hypot(foot.x, foot.y), 1)
+        tip = (knee_f * tibia).multVec(pad_tip)
+        foot_tip = [round(tip.x, 2), round(tip.y, 2), round(abs(tip.z), 2)]
 
     manifest = {
         "units": "mm",
         "axes": "x вперёд, y вверх, z вправо; начало — центр корпуса на высоте осей бёдер",
         "source": "cad/web/export_web_models.py",
         "geometry": {"femur_mm": FEMUR, "tibia_mm": tibia_len,
-                     "foot_inset_mm": round(TIB_FOOT_X - TIB_TIP_X, 1)},  # подошва внутрь от торца вала бедра
+                     "foot_inset_mm": round(TIB_FOOT_X - TIB_TIP_X, 1),  # подошва внутрь от торца вала бедра
+                     # низ стоппера в нулевой позе, система колена: x, y, |z| (z — внутрь от торца вала)
+                     "foot_tip_mm": foot_tip, "foot_pad_mm": [PAD_D, PAD_H]},
         "hips": hips,
         "parts": parts,
     }

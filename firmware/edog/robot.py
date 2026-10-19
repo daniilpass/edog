@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from math import pi, sin
 
 from .collision import FrameGuard
-from .config import Config, save_calibration, save_power
+from .config import Config, save_calibration
 from .kinematics import foot_in_leg, ik
 from .power import PowerCfg
 
@@ -240,18 +240,17 @@ class Robot:
         s.cfg.zero = round(s.current - s.cfg.dir * joint_deg, 1)
 
     def save_calibration(self) -> str:
-        return str(save_calibration(self.cfg, self.servos.values()))
+        return str(save_calibration(self.cfg, self.servos.values(), asdict(self.power)))
 
     def installed_count(self) -> int:
         return sum(s.cfg.installed for s in self.servos.values())
 
     def update_power(self, limit_a: float | None = None, servo_a: float | None = None) -> None:
-        """Лимит тока из портала: проверяется по уже подключённым серво и сразу сохраняется."""
+        """Лимит тока из портала: проверяется по уже подключённым серво. В файл — save_calibration()."""
         new = replace(self.power, **{k: v for k, v in (("limit_a", limit_a), ("servo_a", servo_a)) if v is not None})
         new.validate()
         new.check(self.installed_count())
         self.power = new
-        save_power(self.cfg, asdict(new))
 
     def drive(self) -> tuple[tuple[float, float], str]:
         if time.monotonic() - self.web_drive_t < self.m["drive_timeout_s"]:

@@ -152,6 +152,7 @@ tr.off td { color: var(--muted); }
 details summary { cursor: pointer; color: var(--muted); margin: 6px 0; }
 .calib { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .calib label { font-size: 12px; color: var(--muted); }
+.calib input, .calib select { color: var(--text); }
 
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }

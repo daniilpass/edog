@@ -146,6 +146,11 @@ export class Dog3D {
       if (g.tibia_mm) leg.foot.position.y = -g.tibia_mm;
       // Подошва внутри от оси бедра (голень стоит внутри бедра) — важно для крена.
       if (g.foot_inset_mm) leg.foot.position.z = (leg.cfg.side === 'left' ? 1 : -1) * g.foot_inset_mm;
+      // Опора — низ резинового стоппера, а не подошва голени.
+      if (g.foot_tip_mm) {
+        const [x, y, z] = g.foot_tip_mm;
+        leg.foot.position.set(x, y, (leg.cfg.side === 'left' ? 1 : -1) * z);
+      }
       // Маркер сустава — снаружи бедра: у левых ног наружу −z, у правых (без отражения) +z.
       const outward = leg.hipBase.scale.z < 0 || leg.cfg.side === 'left' ? -1 : 1;
       for (const m of this.markers) {

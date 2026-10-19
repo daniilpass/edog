@@ -23,6 +23,8 @@
     <span id="st-pad" class="pill">Геймпад: …</span>
   </div>
   <div class="header-actions">
+    <span class="muted" id="cal-dirty"></span>
+    <button id="cal-save" class="primary" title="Калибровка серво, «подключено» и лимит тока — в calibration.json">Сохранить</button>
     <label class="switch" title="Подать/снять сигнал с серво">
       <input type="checkbox" id="torque"><span>Серво</span>
     </label>
@@ -134,10 +136,6 @@
           </div>
           <div class="row"><button id="cal-apply">Применить</button></div>
         </details>
-        <div class="row">
-          <button id="cal-save" class="primary">Сохранить калибровку</button>
-          <span class="muted" id="cal-dirty"></span>
-        </div>
       </div>
     </div>
   </aside>
