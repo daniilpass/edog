@@ -58,6 +58,16 @@
     </div>
 
     <div class="card">
+      <h2>Питание серво</h2>
+      <div class="calib">
+        <label>Лимит, А <input type="number" id="pw-limit" min="0" step="0.1"></label>
+        <label>Пик одного серво, А <input type="number" id="pw-servo" min="0.1" step="0.05"></label>
+      </div>
+      <div class="row"><button id="pw-apply">Применить</button></div>
+      <div class="muted" id="pw-info"></div>
+    </div>
+
+    <div class="card">
       <h2>Корпус</h2>
       <label class="slider">Высота <output id="o-height"></output>
         <input type="range" id="height" step="1"></label>

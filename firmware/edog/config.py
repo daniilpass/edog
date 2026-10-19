@@ -42,6 +42,7 @@ class Config:
     geometry: dict
     motion: dict
     gamepad: dict
+    power: dict = field(default_factory=dict)   # [power] из config.toml, поверх — "power" из calibration.json
     legs: list[LegCfg] = field(default_factory=list)
     servos: list[ServoCfg] = field(default_factory=list)
 
@@ -79,6 +80,7 @@ def load_config(path: str | Path) -> Config:
         geometry=raw["geometry"],
         motion=raw["motion"],
         gamepad=raw.get("gamepad", {}),
+        power=raw.get("power", {}),
         legs=legs,
         servos=servos,
     )
@@ -87,17 +89,34 @@ def load_config(path: str | Path) -> Config:
 
 
 def _apply_calibration(cfg: Config) -> None:
-    if not cfg.calibration_path.exists():
-        return
-    data = json.loads(cfg.calibration_path.read_text(encoding="utf-8"))
+    data = _read_calibration(cfg)
+    cfg.power.update(data.get("power", {}))
     for s in cfg.servos:
         for key, value in data.get(s.id, {}).items():
             if key in CALIB_FIELDS:
                 setattr(s, key, type(getattr(s, key))(value))
 
 
+def _read_calibration(cfg: Config) -> dict:
+    if not cfg.calibration_path.exists():
+        return {}
+    return json.loads(cfg.calibration_path.read_text(encoding="utf-8"))
+
+
 def save_calibration(cfg: Config, servos) -> Path:
-    data = {s.cfg.id: {k: getattr(s.cfg, k) for k in CALIB_FIELDS} for s in servos}
+    data = _read_calibration(cfg)
+    data.update({s.cfg.id: {k: getattr(s.cfg, k) for k in CALIB_FIELDS} for s in servos})
+    return _write_calibration(cfg, data)
+
+
+def save_power(cfg: Config, power: dict) -> Path:
+    """Только настройки питания: несохранённая калибровка серво в файл не попадает."""
+    data = _read_calibration(cfg)
+    data["power"] = power
+    return _write_calibration(cfg, data)
+
+
+def _write_calibration(cfg: Config, data: dict) -> Path:
     tmp = cfg.calibration_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(cfg.calibration_path)

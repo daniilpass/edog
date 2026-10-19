@@ -60,7 +60,10 @@ class Gamepad:
         elif action == "walk_toggle":
             r.toggle_walk()
         elif action == "torque_toggle":
-            r.set_enabled(not r.enabled)
+            try:
+                r.set_enabled(not r.enabled)
+            except ValueError as e:   # лимит тока: серво не включаются
+                log.warning("%s", e)
         elif action == "estop":
             r.estop()
         else:

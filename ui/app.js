@@ -176,11 +176,15 @@ function render(s) {
     : 'Для движения включите режим «Ходьба».';
   $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', walk: 'ходьба', manual: 'ручной' }[s.mode]}`;
 
+  renderPower(s.power);
+  const full = powerFull(s.power);
   for (const sv of s.servos) {
     const tr = rows[sv.id];
     if (!tr) continue;
     const cell = k => tr.querySelector(`[data-k="${k}"]`);
     cell('installed').checked = sv.installed;
+    cell('installed').disabled = full && !sv.installed;
+    cell('installed').title = full && !sv.installed ? 'Лимит тока: сначала отключите другое серво' : '';
     tr.classList.toggle('off', !sv.installed);
     cell('joint').textContent = sv.joint_current.toFixed(1);
     cell('current').textContent = sv.current.toFixed(1);
@@ -191,6 +195,19 @@ function render(s) {
     cell('limits').textContent = `${sv.min_deg}…${sv.max_deg}`;
   }
   renderDetail();
+}
+
+// Лимит тока: подключить можно не больше max_servos приводов (null — без ограничения).
+const powerFull = p => p.max_servos !== null && p.installed >= p.max_servos;
+
+function renderPower(p) {
+  for (const [id, k] of [['pw-limit', 'limit_a'], ['pw-servo', 'servo_a']]) {
+    if (document.activeElement !== $(id)) $(id).value = p[k];
+  }
+  $('pw-info').textContent = p.max_servos === null
+    ? `Без ограничения (лимит 0). Подключено ${p.installed} серво, в пике до ${(p.installed * p.servo_a).toFixed(1)} А.`
+    : `Подключено ${p.installed} из ${p.max_servos} возможных · в пике до ${(p.installed * p.servo_a).toFixed(1)} А из ${p.limit_a} А`
+      + (powerFull(p) ? ' · ⚠ лимит исчерпан' : '');
 }
 
 function renderGamepad(gp) {
@@ -229,6 +246,7 @@ function renderDetail() {
   if (!sv) return;
   $('sd-name').textContent = `${sv.id} · ${LEG_NAMES[sv.leg]}, ${JOINT_NAMES[sv.joint]}`;
   if (document.activeElement !== $('sd-installed')) $('sd-installed').checked = sv.installed;
+  $('sd-installed').disabled = powerFull(state.power) && !sv.installed;
   const signal = !sv.installed ? 'не подключено' : !state.enabled ? 'серво выключены' : `${sv.pulse_us} мкс`;
   $('sd-kv').innerHTML = [
     ['Канал PCA9685', sv.channel],
@@ -320,6 +338,10 @@ function bindControls() {
   });
   addEventListener('keyup', e => release(e.code));
   addEventListener('blur', () => { for (const k of [...held.keys()]) release(k); });
+
+  $('pw-apply').onclick = () => api('PATCH', '/api/power', {
+    limit_a: Number($('pw-limit').value), servo_a: Number($('pw-servo').value),
+  }).then(s => toast(`Лимит тока сохранён: ${s.power.limit_a} А`));
 
   $('bt-scan').onclick = scanBluetooth;
 }

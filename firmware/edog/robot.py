@@ -3,12 +3,13 @@
 import asyncio
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from math import pi, sin
 
 from .collision import FrameGuard
-from .config import Config, save_calibration
+from .config import Config, save_calibration, save_power
 from .kinematics import foot_in_leg, ik
+from .power import PowerCfg
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class Robot:
         self.web_drive_t = 0.0
         self.phase = 0.0
         self.gamepad = {"connected": False, "name": None}
+        self.power = PowerCfg.from_dict(cfg.power)
 
         # Узел колена не поднимается выше плоскости рамы (см. collision.py).
         hull = cfg.path.with_name("leg_hull.json")
@@ -116,6 +118,8 @@ class Robot:
     def set_enabled(self, enabled: bool) -> None:
         if enabled == self.enabled:
             return
+        if enabled:
+            self.power.check(self.installed_count())
         self.enabled = enabled
         if enabled:
             # Реальное положение серво неизвестно: при включении они встают в цель рывком.
@@ -218,6 +222,8 @@ class Robot:
                 continue
             if key == "dir" and value not in (-1, 1):
                 raise ValueError("dir: -1 или 1")
+            if key == "installed" and value and not c.installed:
+                self.power.check(self.installed_count() + 1)
             setattr(c, key, value)
             if key == "installed" and not value:
                 self.servos[sid].queue.clear()
@@ -235,6 +241,17 @@ class Robot:
 
     def save_calibration(self) -> str:
         return str(save_calibration(self.cfg, self.servos.values()))
+
+    def installed_count(self) -> int:
+        return sum(s.cfg.installed for s in self.servos.values())
+
+    def update_power(self, limit_a: float | None = None, servo_a: float | None = None) -> None:
+        """Лимит тока из портала: проверяется по уже подключённым серво и сразу сохраняется."""
+        new = replace(self.power, **{k: v for k, v in (("limit_a", limit_a), ("servo_a", servo_a)) if v is not None})
+        new.validate()
+        new.check(self.installed_count())
+        self.power = new
+        save_power(self.cfg, asdict(new))
 
     def drive(self) -> tuple[tuple[float, float], str]:
         if time.monotonic() - self.web_drive_t < self.m["drive_timeout_s"]:
@@ -379,4 +396,6 @@ class Robot:
             "driver": {"kind": self.driver.kind, "error": self.driver_error},
             "servos": [{**s.state(), "frame_blocked": self.blocked[s.cfg.leg]} for s in self.servos.values()],
             "frame_guard": self.guard is not None,
+            "power": {**asdict(self.power), "max_servos": self.power.max_servos(),
+                      "installed": self.installed_count()},
         }

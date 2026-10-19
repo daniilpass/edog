@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ def test_ik_unreachable_is_clamped():
 def robot(tmp_path):
     cfg = load_config(CONFIG)
     cfg.path = tmp_path / "config.toml"  # калибровка пишется во временную папку
+    cfg.power["limit_a"] = 0  # лимит тока проверяется отдельно
     for s in cfg.servos:
         s.installed = True
     return Robot(cfg, MockDriver())
@@ -252,3 +254,38 @@ def test_frame_guard_stops_sweep_at_frame(guarded):
     knee = r.servos["RL_knee"]
     assert not knee.queue                      # проход остановлен у рамы
     assert knee.servo_to_joint(knee.current) < 140
+
+
+def test_power_limit_caps_installed(robot):
+    for s in robot.cfg.servos:
+        s.installed = False
+    robot.update_power(limit_a=3.0, servo_a=0.9)   # 3 / 0.9 → 3 серво
+    for sid in ("FL_hip", "FL_knee", "FR_hip"):
+        robot.update_calibration(sid, installed=True)
+    with pytest.raises(ValueError, match="не больше 3"):
+        robot.update_calibration("FR_knee", installed=True)
+    assert not robot.servos["FR_knee"].cfg.installed
+    robot.update_calibration("FL_hip", installed=False)
+    robot.update_calibration("FR_knee", installed=True)
+    assert robot.state()["power"] == {"limit_a": 3.0, "servo_a": 0.9, "max_servos": 3, "installed": 3}
+
+
+def test_power_limit_blocks_enable_and_lowering(robot):
+    with pytest.raises(ValueError):
+        robot.update_power(limit_a=3.0)                # подключены все 8
+    assert robot.power.limit_a == 0
+    robot.cfg.power["limit_a"] = 3.0
+    robot.power.limit_a = 3.0                          # например, из старого calibration.json
+    with pytest.raises(ValueError):
+        robot.set_enabled(True)
+    assert not robot.enabled
+
+
+def test_power_saved_without_servo_calibration(robot):
+    robot.update_power(limit_a=8.0)
+    robot.servos["FL_hip"].cfg.zero = 12.0             # не сохранено — в файл не попадает
+    data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
+    assert data == {"power": {"limit_a": 8.0, "servo_a": 0.9}}
+    robot.save_calibration()
+    data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
+    assert data["power"]["limit_a"] == 8.0 and data["FL_hip"]["zero"] == 12.0

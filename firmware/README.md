@@ -134,6 +134,7 @@ sudo systemctl restart edog
 | PATCH | `/api/servos/{id}/calibration` | `installed`, `zero`, `dir`, `min_deg`, `max_deg` |
 | POST | `/api/servos/{id}/calibrate` `{joint}` | «сустав сейчас = joint°» → zero |
 | POST | `/api/calibration/save` | записать calibration.json |
+| PATCH | `/api/power` `{limit_a, servo_a}` | лимит тока серво: подключить можно не больше `limit_a / servo_a` приводов; сохраняется сразу |
 | GET | `/api/bluetooth/scan` | поиск устройств |
 | POST | `/api/bluetooth/pair` / `remove` `{mac}` | сопряжение / забыть |
 | WS | `/ws` | состояние 20 раз/с; клиент шлёт `{"type":"drive"}` / `{"type":"servo"}` |

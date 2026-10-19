@@ -53,6 +53,11 @@ class TestReq(BaseModel):
     delta: float = Field(0, ge=-30, le=30, description="для nudge: шаг, °")
 
 
+class PowerReq(BaseModel):
+    limit_a: float | None = Field(None, ge=0, le=50, description="лимит БП серво, А; 0 — без ограничения")
+    servo_a: float | None = Field(None, gt=0, le=5, description="пиковый ток одного серво, А")
+
+
 class MacReq(BaseModel):
     mac: str
 
@@ -137,6 +142,10 @@ def create_app(robot) -> tuple[FastAPI, callable]:
     @app.post("/api/calibration/save")
     def save_calibration():
         return {"saved": robot.save_calibration()}
+
+    @app.patch("/api/power")
+    def patch_power(req: PowerReq):
+        return servo_call(robot.update_power, req.limit_a, req.servo_a)
 
     @app.get("/api/bluetooth/scan")
     async def bt_scan(seconds: int = 8):
