@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, replace
 from math import pi, sin
 
 from .collision import FrameGuard
-from .config import Config, save_calibration
+from .config import JOINTS, Config, save_calibration
+from .demo import Demo, pick_program
 from .kinematics import foot_in_leg, ik
 from .power import PowerCfg
 
@@ -22,6 +23,15 @@ TROT_PHASE = {"FL": 0.0, "RR": 0.0, "FR": 0.5, "RL": 0.5}
 
 def clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+def step_offset(p: float, stride: float, lift: float) -> tuple[float, float]:
+    """Смещение лапы (вперёд, вверх), мм, в фазе шага p ∈ [0, 1)."""
+    if p < 0.5:   # перенос: лапа в воздухе идёт вперёд
+        s = p / 0.5
+        return stride * (s - 0.5), lift * sin(pi * s)
+    s = (p - 0.5) / 0.5   # опора: лапа на земле уходит назад
+    return stride * (0.5 - s), 0.0
 
 
 class Servo:
@@ -90,6 +100,8 @@ class Robot:
         self.phase = 0.0
         self.gamepad = {"connected": False, "name": None}
         self.power = PowerCfg.from_dict(cfg.power)
+        self.demo: Demo | None = None
+        self.signal: set[str] = set()   # серво, на каналы которых сейчас идёт импульс
 
         # Узел колена не поднимается выше плоскости рамы (см. collision.py).
         hull = cfg.path.with_name("leg_hull.json")
@@ -116,6 +128,7 @@ class Robot:
         }
 
     def set_enabled(self, enabled: bool) -> None:
+        self.stop_demo()
         if enabled == self.enabled:
             return
         if enabled:
@@ -128,6 +141,7 @@ class Robot:
             self._write()
         else:
             self.driver.all_off()
+            self.signal = set()
         log.info("серво %s", "включены" if enabled else "отключены")
 
     def estop(self) -> None:
@@ -137,6 +151,7 @@ class Robot:
     def set_mode(self, mode: str) -> None:
         if mode not in MODES:
             raise ValueError(f"режим: {MODES}")
+        self.stop_demo()
         self.mode = mode
         self._stop_tests()
 
@@ -148,6 +163,7 @@ class Robot:
         poses = self.poses()
         if name not in poses:
             raise KeyError(name)
+        self.stop_demo()
         self.body = poses[name]
         self.pose_name = name
         self._stop_tests()
@@ -155,6 +171,7 @@ class Robot:
             self.mode = "stand"
 
     def toggle_walk(self) -> None:
+        self.stop_demo()
         self.mode = "stand" if self.mode == "walk" else "walk"
 
     def set_body(self, height=None, pitch=None, roll=None) -> None:
@@ -166,6 +183,7 @@ class Robot:
         if roll is not None:
             max_roll = m.get("max_roll_deg", m["max_tilt_deg"])
             self.body.roll = clamp(roll, -max_roll, max_roll)
+        self.stop_demo()
         self.pose_name = None
         if self.mode == "manual":
             self.mode = "stand"
@@ -188,6 +206,7 @@ class Robot:
             new = (j, old[1]) if c.joint == "hip" else (old[0], j)
             if not self.guard.allows_move(old, new):
                 raise ValueError(f"{c.id}: колено упрётся в раму (бедро {new[0]:.0f}°, колено {new[1]:.0f}°)")
+        self.stop_demo()
         self.mode = "manual"
         s.queue.clear()
         s.set_target(servo_deg)
@@ -252,6 +271,45 @@ class Robot:
         new.check(self.installed_count())
         self.power = new
 
+    def start_demo(self, seconds: float = 3.0, laps: int = 3) -> None:
+        """Демо: ноги по кругу шагают в воздухе по seconds секунд, laps кругов. Сколько ног
+        сразу — по лимиту тока; сигнал только на шагающие ноги (отметки «подключено»
+        на время демо не действуют). В конце сигнал снимается."""
+        program = pick_program(self.power.max_servos())
+        ref = {joint: next(s.cfg.ref_deg for s in self.servos.values() if s.cfg.joint == joint) for joint in JOINTS}
+        demo = Demo(program, seconds, laps, ref, self._demo_step)
+        self.stop_demo()
+        self._stop_tests()
+        if self.enabled:
+            self.driver.all_off()
+            self.signal = set()
+        for s in self.servos.values():
+            s.set_target(s.joint_to_servo(ref[s.cfg.joint]))
+            s.current = s.target
+        self.demo = demo
+        self.mode = "demo"
+        self.enabled = True
+        log.info("демо: %s, %g с на ногу, кругов %d", program, seconds, laps)
+
+    def stop_demo(self) -> None:
+        if not self.demo:
+            return
+        self.demo = None
+        self.enabled = False
+        self.driver.all_off()
+        self.signal = set()
+        self.mode = "manual"
+        log.info("демо остановлено, сигнал снят")
+
+    def _demo_step(self, name: str, t: float) -> tuple[float, float]:
+        """Шаг вперёд полной длины в воздухе: корпус на высоте стойки, без наклонов."""
+        m, leg = self.m, self.legs[name]
+        p = (t * m["gait_hz"] + TROT_PHASE.get(name, 0.0)) % 1.0
+        dx, dz = step_offset(p, m["stride_mm"], m["lift_mm"])
+        y = (1 if leg.side == "left" else -1) * self.g["body_width_mm"] / 2
+        x, z, _ = foot_in_leg((leg.x_mm + dx, y, dz), (leg.x_mm, y, 0.0), m["stand_height_mm"], 0.0, 0.0)
+        return ik(x, z, self.g["femur_mm"], self.g["tibia_mm"], leg.knee_dir, self.g.get("tibia_bend_deg", 0.0))
+
     def drive(self) -> tuple[tuple[float, float], str]:
         if time.monotonic() - self.web_drive_t < self.m["drive_timeout_s"]:
             return self.web_drive, "web"
@@ -281,19 +339,20 @@ class Robot:
             if walking:
                 stride = m["stride_mm"] * clamp(vx + side * turn, -1, 1)
                 p = (self.phase + TROT_PHASE.get(leg.name, 0.0)) % 1.0
-                if p < 0.5:   # перенос: лапа в воздухе идёт вперёд
-                    s = p / 0.5
-                    fx += stride * (s - 0.5)
-                    fz += m["lift_mm"] * sin(pi * s)
-                else:         # опора: лапа на земле уходит назад
-                    s = (p - 0.5) / 0.5
-                    fx += stride * (0.5 - s)
+                dx, dz = step_offset(p, stride, m["lift_mm"])
+                fx, fz = fx + dx, fz + dz
             hip = (leg.x_mm, side * half_width, 0.0)
             x, z, _ = foot_in_leg((fx, side * half_width, fz), hip, self.body.height, pitch, roll)
             result[leg.name] = (x, z)
         return result
 
     def _update_targets(self, dt: float) -> None:
+        if self.demo:
+            for name, angles in self.demo.tick(dt).items():
+                for joint, angle in zip(JOINTS, angles):
+                    s = self.servos[f"{name}_{joint}"]
+                    s.set_target(s.joint_to_servo(angle))
+            return
         if self.mode == "manual":
             return
         for name, (x, z) in self.feet(dt).items():
@@ -304,11 +363,21 @@ class Robot:
                 s = self.servos[f"{name}_{joint}"]
                 s.set_target(s.joint_to_servo(angle))
 
-    def _write(self) -> None:
+    def _signal_ids(self) -> set[str]:
         # Сигнал только на подключённые серво: при сборке ноги появляются по одной.
-        for s in self.servos.values():
-            if s.cfg.installed:
-                self.driver.set_pulse(s.cfg.channel, s.pulse_us(s.current))
+        # В демо — только на танцующие ноги: их число подобрано по лимиту тока.
+        if self.demo:
+            return {f"{leg}_{joint}" for leg in self.demo.legs for joint in JOINTS}
+        return {sid for sid, s in self.servos.items() if s.cfg.installed}
+
+    def _write(self) -> None:
+        on = self._signal_ids()
+        for sid in self.signal - on:
+            self.driver.off(self.servos[sid].cfg.channel)
+        for sid in on:
+            s = self.servos[sid]
+            self.driver.set_pulse(s.cfg.channel, s.pulse_us(s.current))
+        self.signal = on
 
     def step(self, dt: float) -> None:
         self._update_targets(dt)
@@ -323,6 +392,8 @@ class Robot:
             if s.queue and abs(s.target - s.current) < 1e-6:
                 s.set_target(s.queue.pop(0))
         self._guard_legs(before)
+        if self.demo and self.demo.finished:
+            self.stop_demo()
         if self.enabled:
             self._write()
 
@@ -393,7 +464,9 @@ class Robot:
             "drive": {"vx": vx, "turn": turn, "source": source},
             "gamepad": self.gamepad,
             "driver": {"kind": self.driver.kind, "error": self.driver_error},
-            "servos": [{**s.state(), "frame_blocked": self.blocked[s.cfg.leg]} for s in self.servos.values()],
+            "servos": [{**s.state(), "frame_blocked": self.blocked[s.cfg.leg], "signal": sid in self.signal}
+                       for sid, s in self.servos.items()],
+            "demo": self.demo.state() if self.demo else None,
             "frame_guard": self.guard is not None,
             "power": {**asdict(self.power), "max_servos": self.power.max_servos(),
                       "installed": self.installed_count()},

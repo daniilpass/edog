@@ -288,3 +288,40 @@ def test_power_saved_with_calibration(robot):
     robot.save_calibration()
     data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
     assert data["power"] == {"limit_a": 8.0, "servo_a": 0.9} and data["FL_hip"]["zero"] == 12.0
+
+
+@pytest.mark.parametrize("limit_a,program,legs", [(3.0, "solo", 1), (4.0, "pairs", 2), (0, "all", 4)])
+def test_demo_by_power_limit(guarded, limit_a, program, legs):
+    r = guarded
+    for s in r.cfg.servos:
+        s.installed = False
+    r.update_power(limit_a=limit_a, servo_a=0.9)
+    r.start_demo(seconds=3, laps=2)
+    assert r.state()["demo"]["program"] == program
+    max_servos = r.power.max_servos() or 8
+    for _ in range(20000):
+        r.step(0.02)
+        on = [ch for ch, us in r.driver.pulses.items() if us is not None]
+        assert len(on) <= min(2 * legs, max_servos)
+        assert not any(r.blocked.values()), r.state()["demo"]
+        assert not any(s.clamped for s in r.servos.values())
+        if not r.demo:
+            break
+    assert not r.demo and not r.enabled and r.mode == "manual"
+    assert all(us is None for us in r.driver.pulses.values())
+    for s in r.servos.values():                        # закончили в монтажном положении
+        assert s.servo_to_joint(s.current) == pytest.approx(s.cfg.ref_deg, abs=1)
+
+
+def test_demo_needs_two_servos(robot):
+    robot.power.limit_a, robot.power.servo_a = 1.0, 0.9   # 1 серво — даже одной ноге мало
+    with pytest.raises(ValueError, match="хотя бы 2"):
+        robot.start_demo()
+    assert not robot.demo and not robot.enabled
+
+
+def test_any_command_stops_demo(robot):
+    robot.start_demo()
+    robot.step(0.02)
+    robot.set_pose("stand")
+    assert not robot.demo and not robot.enabled and robot.state()["demo"] is None

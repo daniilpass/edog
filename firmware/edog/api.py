@@ -58,6 +58,12 @@ class PowerReq(BaseModel):
     servo_a: float | None = Field(None, gt=0, le=5, description="пиковый ток одного серво, А")
 
 
+class DemoReq(BaseModel):
+    action: Literal["start", "stop"]
+    seconds: float = Field(3, ge=1, le=20, description="сколько шагает каждая нога (группа), с")
+    laps: int = Field(3, ge=1, le=20, description="кругов по ногам")
+
+
 class MacReq(BaseModel):
     mac: str
 
@@ -110,6 +116,13 @@ def create_app(robot) -> tuple[FastAPI, callable]:
     @app.post("/api/pose/{name}")
     def pose(name: str):
         return servo_call(robot.set_pose, name)
+
+    @app.post("/api/demo")
+    def demo(req: DemoReq):
+        """Демо: ноги по кругу шагают в воздухе; сколько ног сразу — по лимиту тока."""
+        if req.action == "start":
+            return servo_call(robot.start_demo, req.seconds, req.laps)
+        return servo_call(robot.stop_demo)
 
     @app.post("/api/body")
     def body(req: BodyReq):

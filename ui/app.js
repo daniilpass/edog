@@ -174,7 +174,8 @@ function render(s) {
   $('drive-info').textContent = s.mode === 'walk'
     ? `vx ${d.vx.toFixed(2)} · поворот ${d.turn.toFixed(2)} · ${d.source === 'web' ? 'портал' : 'геймпад'}`
     : 'Для движения включите режим «Ходьба».';
-  $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', walk: 'ходьба', manual: 'ручной' }[s.mode]}`;
+  $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', walk: 'ходьба', manual: 'ручной', demo: 'демо' }[s.mode]}`;
+  renderDemo(s);
 
   renderPower(s.power);
   $('cal-dirty').textContent = calibDirty ? '⚠ есть несохранённые изменения' : 'всё сохранено';
@@ -192,10 +193,24 @@ function render(s) {
     const marks = [sv.clamped && '⚠ предел', sv.frame_blocked && '⚠ упор в раму'].filter(Boolean).join(' ');
     cell('target').textContent = marks ? `${sv.target.toFixed(1)} ${marks}` : sv.target.toFixed(1);
     cell('target').classList.toggle('clamped', sv.clamped || sv.frame_blocked);
-    cell('pulse').textContent = s.enabled && sv.installed ? sv.pulse_us : '—';
+    cell('pulse').textContent = sv.signal ? sv.pulse_us : '—';
     cell('limits').textContent = `${sv.min_deg}…${sv.max_deg}`;
   }
   renderDetail();
+}
+
+// Демо: ноги по кругу шагают в воздухе; сколько ног сразу — подбирает собака по лимиту тока.
+
+function renderDemo(s) {
+  const d = s.demo;
+  $('demo').textContent = d ? 'Остановить демо' : 'Демо';
+  $('demo').classList.toggle('active', !!d);
+  const n = s.power.max_servos;
+  $('demo-info').textContent = d
+    ? `Идёт: ${d.title} · шагает ${d.legs.join(', ')} (${d.number} из ${d.numbers}) · ${Math.round(d.progress * 100)}%`
+    : n !== null && n < 2 ? '⚠ Лимит тока меньше двух серво — демо недоступно'
+    : `Ноги по кругу шагают по 3 с · по лимиту тока: ${n === null || n >= 8 ? 'все ноги' : n >= 4 ? 'диагональными парами' : 'по одной ноге'}`;
+  $('demo').disabled = !d && n !== null && n < 2;
 }
 
 // Лимит тока: подключить можно не больше max_servos приводов (null — без ограничения).
@@ -280,6 +295,7 @@ function renderDetail() {
 function bindControls() {
   $('torque').onchange = e => api('POST', '/api/enable', { enabled: e.target.checked });
   $('estop').onclick = () => api('POST', '/api/estop');
+  $('demo').onclick = () => api('POST', '/api/demo', { action: state?.demo ? 'stop' : 'start' });
   for (const b of $('modes').children) b.onclick = () => api('POST', '/api/mode', { mode: b.dataset.mode });
 
   const sendBody = throttle(k => api('POST', '/api/body', { [k]: Number($(k).value) }), 80);
