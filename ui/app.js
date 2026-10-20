@@ -176,6 +176,7 @@ function render(s) {
     : 'Для движения включите режим «Ходьба».';
   $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', walk: 'ходьба', manual: 'ручной', demo: 'демо' }[s.mode]}`;
   renderDemo(s);
+  renderGait(s.gait);
 
   renderPower(s.power);
   $('cal-dirty').textContent = calibDirty ? '⚠ есть несохранённые изменения' : 'всё сохранено';
@@ -209,8 +210,21 @@ function renderDemo(s) {
   $('demo-info').textContent = d
     ? `Идёт: ${d.title} · шагает ${d.legs.join(', ')} (${d.number} из ${d.numbers}) · ${Math.round(d.progress * 100)}%`
     : n !== null && n < 2 ? '⚠ Лимит тока меньше двух серво — демо недоступно'
-    : `Ноги по кругу шагают по 3 с · по лимиту тока: ${n === null || n >= 8 ? 'все ноги' : n >= 4 ? 'диагональными парами' : 'по одной ноге'}`;
+    : `Ноги по кругу с правой передней, по 4 цикла шага · по лимиту тока: ${n === null || n >= 8 ? 'все ноги' : n >= 4 ? 'диагональными парами' : 'по одной ноге'}`;
   $('demo').disabled = !d && n !== null && n < 2;
+}
+
+// Профили ходьбы: размах суставов и пик скорости посчитаны собакой для шага полной длины в стойке.
+
+function renderGait(name) {
+  const sel = $('gait');
+  if (document.activeElement !== sel) sel.value = name;
+  const g = config.gaits.find(x => x.name === name);
+  if (!g) return;
+  $('gait-info').textContent = `${g.gait_hz} шаг/с · длина ${g.stride_mm} мм · подъём ${g.lift_mm} мм · `
+    + `бедро ±${(g.hip_swing / 2).toFixed(0)}°, колено ±${(g.knee_swing / 2).toFixed(0)}° · `
+    + `пик ${Math.max(g.hip_peak_dps, g.knee_peak_dps)} °/с из ${g.speed_dps}`
+    + (g.limited ? ' · ⚠ упор в скорость серво: реальный шаг меньше' : '');
 }
 
 // Лимит тока: подключить можно не больше max_servos приводов (null — без ограничения).
@@ -295,6 +309,9 @@ function renderDetail() {
 function bindControls() {
   $('torque').onchange = e => api('POST', '/api/enable', { enabled: e.target.checked });
   $('estop').onclick = () => api('POST', '/api/estop');
+  $('gait').innerHTML = config.gaits.map(g => `<option value="${g.name}">${g.title} · ~${(g.stride_mm * g.gait_hz / 10).toFixed(1)} см/с</option>`).join('');
+  $('gait').onchange = e => api('POST', '/api/gait', { name: e.target.value })
+    .then(() => { calibDirty = true; e.target.blur(); toast('Профиль шага выбран (не забудьте сохранить)'); });
   $('demo').onclick = () => api('POST', '/api/demo', { action: state?.demo ? 'stop' : 'start' });
   for (const b of $('modes').children) b.onclick = () => api('POST', '/api/mode', { mode: b.dataset.mode });
 

@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -290,13 +291,15 @@ def test_power_saved_with_calibration(robot):
     assert data["power"] == {"limit_a": 8.0, "servo_a": 0.9} and data["FL_hip"]["zero"] == 12.0
 
 
+@pytest.mark.parametrize("gait", list(load_config(CONFIG).gaits))
 @pytest.mark.parametrize("limit_a,program,legs", [(3.0, "solo", 1), (4.0, "pairs", 2), (0, "all", 4)])
-def test_demo_by_power_limit(guarded, limit_a, program, legs):
+def test_demo_by_power_limit(guarded, limit_a, program, legs, gait):
     r = guarded
+    r.set_gait(gait)
     for s in r.cfg.servos:
         s.installed = False
     r.update_power(limit_a=limit_a, servo_a=0.9)
-    r.start_demo(seconds=3, laps=2)
+    r.start_demo(cycles=2, laps=2)
     assert r.state()["demo"]["program"] == program
     max_servos = r.power.max_servos() or 8
     for _ in range(20000):
@@ -325,3 +328,30 @@ def test_any_command_stops_demo(robot):
     robot.step(0.02)
     robot.set_pose("stand")
     assert not robot.demo and not robot.enabled and robot.state()["demo"] is None
+
+
+def test_gait_profiles(robot):
+    gaits = {g["name"]: g for g in robot.describe()["gaits"]}
+    assert robot.state()["gait"] == robot.cfg.gait == "base"
+    assert gaits["base"]["stride_mm"] == 30.0 and gaits["base"]["lift_mm"] == 15.0   # прежняя ходьба
+    assert gaits["max"]["hip_swing"] > gaits["wide"]["hip_swing"] > gaits["base"]["hip_swing"]
+    with pytest.raises(ValueError):
+        robot.set_gait("нет такого")
+    robot.set_gait("wide")
+    assert robot.speed_limit() == robot.cfg.gaits["wide"]["max_speed_dps"]
+    robot.save_calibration()
+    data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
+    assert data["gait"] == "wide"
+
+
+@pytest.mark.parametrize("gait", list(load_config(CONFIG).gaits))
+def test_walk_with_every_gait(guarded, gait):
+    r = guarded
+    r.set_gait(gait)
+    r.set_enabled(True)
+    r.set_mode("walk")
+    r.set_web_drive(1.0, 0.0)
+    for _ in range(200):
+        r.web_drive_t = time.monotonic()
+        r.step(0.02)
+        assert not any(r.blocked.values()) and not any(s.clamped for s in r.servos.values())

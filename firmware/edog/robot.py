@@ -34,6 +34,27 @@ def step_offset(p: float, stride: float, lift: float) -> tuple[float, float]:
     return stride * (0.5 - s), 0.0
 
 
+def gait_stats(gait: dict, height: float, g: dict, knee_dir: int, speed_dps: float, samples: int = 400) -> dict:
+    """Чем профиль отличается на суставах: размах бедра и колена, °, и пиковая скорость, °/с,
+    при шаге полной длины на высоте height. limited — пик выше ограничения скорости серво,
+    то есть ограничитель срежет шаг и реальный размах будет меньше расчётного."""
+    angles = []
+    for i in range(samples + 1):
+        dx, dz = step_offset(i / samples % 1.0, gait["stride_mm"], gait["lift_mm"])
+        x, z, _ = foot_in_leg((dx, 0.0, dz), (0.0, 0.0, 0.0), height, 0.0, 0.0)
+        angles.append(ik(x, z, g["femur_mm"], g["tibia_mm"], knee_dir, g.get("tibia_bend_deg", 0.0)))
+    dt = 1.0 / (gait["gait_hz"] * samples)
+    result = {}
+    for j, joint in enumerate(JOINTS):
+        series = [a[j] for a in angles]
+        peak = max(abs(b[j] - a[j]) for a, b in zip(angles, angles[1:])) / dt
+        result[f"{joint}_swing"] = round(max(series) - min(series), 1)
+        result[f"{joint}_peak_dps"] = round(peak)
+    result["speed_dps"] = speed_dps
+    result["limited"] = max(result["hip_peak_dps"], result["knee_peak_dps"]) > speed_dps
+    return result
+
+
 class Servo:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -98,6 +119,7 @@ class Robot:
         self.web_drive = (0.0, 0.0)
         self.web_drive_t = 0.0
         self.phase = 0.0
+        self.gait_name = cfg.gait
         self.gamepad = {"connected": False, "name": None}
         self.power = PowerCfg.from_dict(cfg.power)
         self.demo: Demo | None = None
@@ -259,7 +281,21 @@ class Robot:
         s.cfg.zero = round(s.current - s.cfg.dir * joint_deg, 1)
 
     def save_calibration(self) -> str:
-        return str(save_calibration(self.cfg, self.servos.values(), asdict(self.power)))
+        return str(save_calibration(self.cfg, self.servos.values(), asdict(self.power), self.gait_name))
+
+    @property
+    def gait(self) -> dict:
+        return self.cfg.gaits[self.gait_name]
+
+    def speed_limit(self, gait: dict | None = None) -> float:
+        return (gait or self.gait).get("max_speed_dps", self.m["max_speed_dps"])
+
+    def set_gait(self, name: str) -> None:
+        """Профиль ходьбы: им же шагает демо. Можно менять на ходу. В файл — save_calibration()."""
+        if name not in self.cfg.gaits:
+            raise ValueError(f"профили ходьбы: {tuple(self.cfg.gaits)}")
+        self.gait_name = name
+        log.info("профиль ходьбы: %s", name)
 
     def installed_count(self) -> int:
         return sum(s.cfg.installed for s in self.servos.values())
@@ -271,13 +307,14 @@ class Robot:
         new.check(self.installed_count())
         self.power = new
 
-    def start_demo(self, seconds: float = 3.0, laps: int = 3) -> None:
-        """Демо: ноги по кругу шагают в воздухе по seconds секунд, laps кругов. Сколько ног
+    def start_demo(self, cycles: int = 4, laps: int = 3) -> None:
+        """Демо: ноги по кругу шагают в воздухе по cycles полных циклов шага выбранного
+        профиля, laps кругов. Сколько ног
         сразу — по лимиту тока; сигнал только на шагающие ноги (отметки «подключено»
         на время демо не действуют). В конце сигнал снимается."""
         program = pick_program(self.power.max_servos())
         ref = {joint: next(s.cfg.ref_deg for s in self.servos.values() if s.cfg.joint == joint) for joint in JOINTS}
-        demo = Demo(program, seconds, laps, ref, self._demo_step)
+        demo = Demo(program, cycles, 1.0 / self.gait["gait_hz"], laps, ref, self._demo_step)
         self.stop_demo()
         self._stop_tests()
         if self.enabled:
@@ -289,7 +326,7 @@ class Robot:
         self.demo = demo
         self.mode = "demo"
         self.enabled = True
-        log.info("демо: %s, %g с на ногу, кругов %d", program, seconds, laps)
+        log.info("демо: %s, шаг %s, по %d циклов на ногу, кругов %d", program, self.gait_name, cycles, laps)
 
     def stop_demo(self) -> None:
         if not self.demo:
@@ -303,9 +340,9 @@ class Robot:
 
     def _demo_step(self, name: str, t: float) -> tuple[float, float]:
         """Шаг вперёд полной длины в воздухе: корпус на высоте стойки, без наклонов."""
-        m, leg = self.m, self.legs[name]
-        p = (t * m["gait_hz"] + TROT_PHASE.get(name, 0.0)) % 1.0
-        dx, dz = step_offset(p, m["stride_mm"], m["lift_mm"])
+        m, gait, leg = self.m, self.gait, self.legs[name]
+        p = (t * gait["gait_hz"] + TROT_PHASE.get(name, 0.0)) % 1.0
+        dx, dz = step_offset(p, gait["stride_mm"], gait["lift_mm"])
         y = (1 if leg.side == "left" else -1) * self.g["body_width_mm"] / 2
         x, z, _ = foot_in_leg((leg.x_mm + dx, y, dz), (leg.x_mm, y, 0.0), m["stand_height_mm"], 0.0, 0.0)
         return ik(x, z, self.g["femur_mm"], self.g["tibia_mm"], leg.knee_dir, self.g.get("tibia_bend_deg", 0.0))
@@ -318,7 +355,7 @@ class Robot:
     # ---------- контур ----------
 
     def feet(self, dt: float) -> dict[str, tuple[float, float]]:
-        m = self.m
+        m, gait = self.m, self.gait
         max_tilt = m["max_tilt_deg"]
         max_roll = m.get("max_roll_deg", max_tilt)
         pitch = clamp(self.body.pitch + self.tilt[0] * max_tilt, -max_tilt, max_tilt)
@@ -327,7 +364,7 @@ class Robot:
         (vx, turn), _ = self.drive()
         walking = self.mode == "walk" and (abs(vx) > 0.05 or abs(turn) > 0.05)
         if walking:
-            self.phase = (self.phase + m["gait_hz"] * dt) % 1.0
+            self.phase = (self.phase + gait["gait_hz"] * dt) % 1.0
 
         # Лапы задаются точками на полу (мир), потом переводятся в систему наклонённого корпуса.
         # Ноги двухзвенные, без отведения: боковое смещение лапы при крене не отрабатывается,
@@ -337,9 +374,9 @@ class Robot:
             side = 1 if leg.side == "left" else -1
             fx, fz = leg.x_mm, 0.0
             if walking:
-                stride = m["stride_mm"] * clamp(vx + side * turn, -1, 1)
+                stride = gait["stride_mm"] * clamp(vx + side * turn, -1, 1)
                 p = (self.phase + TROT_PHASE.get(leg.name, 0.0)) % 1.0
-                dx, dz = step_offset(p, stride, m["lift_mm"])
+                dx, dz = step_offset(p, stride, gait["lift_mm"])
                 fx, fz = fx + dx, fz + dz
             hip = (leg.x_mm, side * half_width, 0.0)
             x, z, _ = foot_in_leg((fx, side * half_width, fz), hip, self.body.height, pitch, roll)
@@ -382,12 +419,13 @@ class Robot:
     def step(self, dt: float) -> None:
         self._update_targets(dt)
         before = {name: self._leg_joints(name, "current") for name in self.legs}
+        max_speed = self.speed_limit()
         for s in self.servos.values():
             if not self.enabled:
                 s.current = s.target
                 s.queue.clear()
                 continue
-            speed = SWEEP_SPEED_DPS if s.queue else self.m["max_speed_dps"]
+            speed = SWEEP_SPEED_DPS if s.queue else max_speed
             s.current += clamp(s.target - s.current, -speed * dt, speed * dt)
             if s.queue and abs(s.target - s.current) < 1e-6:
                 s.set_target(s.queue.pop(0))
@@ -442,6 +480,9 @@ class Robot:
             "servos": [{"id": s.cfg.id, "leg": s.cfg.leg, "joint": s.cfg.joint,
                         "channel": s.cfg.channel} for s in self.servos.values()],
             "poses": list(self.poses()),
+            "gaits": [{"name": name, **gait, **gait_stats(gait, self.m["stand_height_mm"], self.g,
+                                                         self.cfg.legs[0].knee_dir, self.speed_limit(gait))}
+                      for name, gait in self.cfg.gaits.items()],
             "limits": {"height": [self.m["min_height_mm"], self.m["max_height_mm"]],
                        "pitch": self.m["max_tilt_deg"],
                        "roll": self.m.get("max_roll_deg", self.m["max_tilt_deg"])},
@@ -467,6 +508,7 @@ class Robot:
             "servos": [{**s.state(), "frame_blocked": self.blocked[s.cfg.leg], "signal": sid in self.signal}
                        for sid, s in self.servos.items()],
             "demo": self.demo.state() if self.demo else None,
+            "gait": self.gait_name,
             "frame_guard": self.guard is not None,
             "power": {**asdict(self.power), "max_servos": self.power.max_servos(),
                       "installed": self.installed_count()},

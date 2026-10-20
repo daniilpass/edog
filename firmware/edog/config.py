@@ -43,6 +43,8 @@ class Config:
     motion: dict
     gamepad: dict
     power: dict = field(default_factory=dict)   # [power] из config.toml, поверх — "power" из calibration.json
+    gaits: dict[str, dict] = field(default_factory=dict)   # профили ходьбы [gaits.*]
+    gait: str = ""                              # выбранный профиль: motion.gait, поверх — "gait" из calibration.json
     legs: list[LegCfg] = field(default_factory=list)
     servos: list[ServoCfg] = field(default_factory=list)
 
@@ -73,6 +75,15 @@ def load_config(path: str | Path) -> Config:
     if len(set(channels)) != len(channels):
         raise ValueError(f"каналы PCA9685 повторяются: {channels}")
 
+    gaits = raw.get("gaits", {})
+    if not gaits:
+        raise ValueError("нет ни одного профиля ходьбы [gaits.*]")
+    for name, g in gaits.items():
+        missing = {"gait_hz", "stride_mm", "lift_mm"} - g.keys()
+        if missing:
+            raise ValueError(f"gaits.{name}: нет {', '.join(sorted(missing))}")
+        g.setdefault("title", name)
+
     cfg = Config(
         path=path,
         server=raw.get("server", {}),
@@ -81,6 +92,8 @@ def load_config(path: str | Path) -> Config:
         motion=raw["motion"],
         gamepad=raw.get("gamepad", {}),
         power=raw.get("power", {}),
+        gaits=gaits,
+        gait=raw["motion"].get("gait", next(iter(gaits))),
         legs=legs,
         servos=servos,
     )
@@ -91,6 +104,10 @@ def load_config(path: str | Path) -> Config:
 def _apply_calibration(cfg: Config) -> None:
     data = _read_calibration(cfg)
     cfg.power.update(data.get("power", {}))
+    if data.get("gait") in cfg.gaits:
+        cfg.gait = data["gait"]
+    if cfg.gait not in cfg.gaits:
+        raise ValueError(f"motion.gait = {cfg.gait!r}: нет такого профиля, есть {tuple(cfg.gaits)}")
     for s in cfg.servos:
         for key, value in data.get(s.id, {}).items():
             if key in CALIB_FIELDS:
@@ -103,10 +120,11 @@ def _read_calibration(cfg: Config) -> dict:
     return json.loads(cfg.calibration_path.read_text(encoding="utf-8"))
 
 
-def save_calibration(cfg: Config, servos, power: dict) -> Path:
-    """Всё, что меняется из портала, одним файлом: калибровка серво и лимит тока."""
+def save_calibration(cfg: Config, servos, power: dict, gait: str) -> Path:
+    """Всё, что меняется из портала, одним файлом: калибровка серво, лимит тока, профиль ходьбы."""
     data = {s.cfg.id: {k: getattr(s.cfg, k) for k in CALIB_FIELDS} for s in servos}
     data["power"] = power
+    data["gait"] = gait
     tmp = cfg.calibration_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(cfg.calibration_path)

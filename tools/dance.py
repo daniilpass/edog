@@ -1,8 +1,9 @@
 """Демо EDOG из консоли — то же, что кнопка «Демо» в портале: ноги по кругу шагают в воздухе.
 
-    python tools/dance.py                         # собака 192.168.50.129:8080, по 3 с, 3 круга
+    python tools/dance.py                         # собака 192.168.50.129:8080, по 4 цикла шага, 3 круга
     python tools/dance.py --dog 127.0.0.1:8080    # локальный сервис с --mock
-    python tools/dance.py --seconds 5 --laps 1
+    python tools/dance.py --cycles 6 --laps 1
+    python tools/dance.py --gait wide             # профиль шага из [gaits] (выбирается и для ходьбы)
 
 Демо идёт на собаке (firmware/edog/demo.py), сколько ног сразу — по лимиту тока:
 2–3 серво — по одной ноге, 4–7 — диагональными парами, от 8 или без лимита — все ноги.
@@ -32,13 +33,16 @@ def call(api: str, method: str, path: str, body=None) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dog", default="192.168.50.129:8080", help="адрес API собаки")
-    ap.add_argument("--seconds", type=float, default=3, help="сколько шагает каждая нога, с")
+    ap.add_argument("--cycles", type=int, default=4, help="сколько полных циклов шага делает каждая нога")
     ap.add_argument("--laps", type=int, default=3, help="кругов по ногам")
+    ap.add_argument("--gait", help="профиль шага; без него — текущий")
     args = ap.parse_args()
     api = f"http://{args.dog}/api"
 
-    st = call(api, "POST", "/demo", {"action": "start", "seconds": args.seconds, "laps": args.laps})
-    print(f"Демо: {st['demo']['title']}, по {args.seconds:g} с, кругов {args.laps}, лимит {st['power']['limit_a']:g} А")
+    if args.gait:
+        call(api, "POST", "/gait", {"name": args.gait})
+    st = call(api, "POST", "/demo", {"action": "start", "cycles": args.cycles, "laps": args.laps})
+    print(f"Демо: {st['demo']['title']}, шаг {st['gait']}, по {args.cycles} цикла, кругов {args.laps}, лимит {st['power']['limit_a']:g} А")
     last = None
     try:
         while (d := call(api, "GET", "/state")["demo"]):

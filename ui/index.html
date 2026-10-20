@@ -24,7 +24,7 @@
   </div>
   <div class="header-actions">
     <span class="muted" id="cal-dirty"></span>
-    <button id="cal-save" class="primary" title="Калибровка серво, «подключено» и лимит тока — в calibration.json">Сохранить</button>
+    <button id="cal-save" class="primary" title="Калибровка серво, «подключено», лимит тока и профиль шага — в calibration.json">Сохранить</button>
     <label class="switch" title="Подать/снять сигнал с серво">
       <input type="checkbox" id="torque"><span>Серво</span>
     </label>
@@ -57,8 +57,11 @@
         <button data-mode="manual">Ручной</button>
       </div>
       <div class="row poses" id="poses"></div>
+      <label class="row" title="Профиль ходьбы: им шагают и ходьба, и демо. Сохраняется кнопкой «Сохранить»">Шаг
+        <select id="gait"></select></label>
+      <div class="muted" id="gait-info"></div>
       <div class="row">
-        <button id="demo" title="Ноги по кругу шагают в воздухе по 3 с. Сколько ног сразу — по лимиту тока">Демо</button>
+        <button id="demo" title="Ноги по кругу с правой передней шагают в воздухе по 4 цикла выбранным профилем. Сколько ног сразу — по лимиту тока">Демо</button>
         <span class="muted" id="demo-info"></span>
       </div>
     </div>

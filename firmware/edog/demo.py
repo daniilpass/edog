@@ -1,4 +1,4 @@
-"""Демо: ноги по кругу шагают в воздухе, по несколько секунд каждая группа.
+"""Демо: ноги по кругу шагают в воздухе, по несколько полных циклов шага каждая группа.
 Размер группы подбирается по лимиту тока: сигнал получают только серво шагающих ног.
 
 Шаг — та же траектория лапы, что при ходьбе (robot.step_offset). Каждая группа плавно выходит
@@ -10,8 +10,8 @@ from collections.abc import Callable
 
 RAMP_S = 0.4    # выход из монтажного положения в шаг и обратно, с
 
-ORDER = ("FL", "FR", "RR", "RL")    # по кругу
-DIAG_A, DIAG_B = ("FL", "RR"), ("FR", "RL")
+ORDER = ("FR", "RR", "RL", "FL")    # по кругу, начиная с правой передней
+DIAG_A, DIAG_B = ("FR", "RL"), ("FL", "RR")
 
 PROGRAMS = {
     "solo": {"title": "по одной ноге", "groups": [(leg,) for leg in ORDER]},   # 2–3 серво
@@ -40,17 +40,20 @@ def envelope(t: float, length: float) -> float:
 
 
 class Demo:
-    def __init__(self, program: str, seconds: float, laps: int, ref: dict[str, float],
+    def __init__(self, program: str, cycles: int, cycle_s: float, laps: int, ref: dict[str, float],
                  walk: Callable[[str, float], tuple[float, float]]):
-        """walk(нога, время шага, с) → углы суставов (hip, knee) шагающей ноги."""
+        """cycles полных циклов шага длиной cycle_s на группу, плюс выход в шаг и возврат.
+        walk(нога, время шага, с) → углы суставов (hip, knee) шагающей ноги."""
         if program not in PROGRAMS:
             raise ValueError(f"демо: программы {tuple(PROGRAMS)}")
-        if seconds < 2 * RAMP_S:
-            raise ValueError(f"демо: на ногу не меньше {2 * RAMP_S:g} с")
+        if cycles < 1:
+            raise ValueError("демо: на ногу хотя бы один цикл шага")
         groups = PROGRAMS[program]["groups"]
-        # Одна группа на всех — шагает без пауз столько же, сколько длился бы круг по ногам.
-        self.segments = ([(groups[0], seconds * len(ORDER) * laps)] if len(groups) == 1
-                         else [(g, seconds) for _ in range(laps) for g in groups])
+        # Одна группа на всех — шагает без пауз столько же циклов, сколько длился бы круг по ногам.
+        def length(n: int) -> float:
+            return n * cycle_s + 2 * RAMP_S
+        self.segments = ([(groups[0], length(cycles * len(ORDER) * laps))] if len(groups) == 1
+                         else [(g, length(cycles)) for _ in range(laps) for g in groups])
         self.program = program
         self.ref = ref
         self.walk = walk
@@ -81,7 +84,7 @@ class Demo:
         e = envelope(self.t, length)
         result = {}
         for leg in legs:
-            hip, knee = self.walk(leg, self.t)
+            hip, knee = self.walk(leg, self.t - RAMP_S)   # полные циклы — между разгоном и торможением
             result[leg] = (self.ref["hip"] + e * (hip - self.ref["hip"]),
                            self.ref["knee"] + e * (knee - self.ref["knee"]))
         return result

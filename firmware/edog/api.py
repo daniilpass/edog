@@ -60,8 +60,12 @@ class PowerReq(BaseModel):
 
 class DemoReq(BaseModel):
     action: Literal["start", "stop"]
-    seconds: float = Field(3, ge=1, le=20, description="сколько шагает каждая нога (группа), с")
+    cycles: int = Field(4, ge=1, le=20, description="сколько полных циклов шага делает каждая нога (группа)")
     laps: int = Field(3, ge=1, le=20, description="кругов по ногам")
+
+
+class GaitReq(BaseModel):
+    name: str = Field(..., description="профиль ходьбы из [gaits] в config.toml")
 
 
 class MacReq(BaseModel):
@@ -121,8 +125,13 @@ def create_app(robot) -> tuple[FastAPI, callable]:
     def demo(req: DemoReq):
         """Демо: ноги по кругу шагают в воздухе; сколько ног сразу — по лимиту тока."""
         if req.action == "start":
-            return servo_call(robot.start_demo, req.seconds, req.laps)
+            return servo_call(robot.start_demo, req.cycles, req.laps)
         return servo_call(robot.stop_demo)
+
+    @app.post("/api/gait")
+    def gait(req: GaitReq):
+        """Профиль ходьбы: им шагают и ходьба, и демо. В файл — /api/calibration/save."""
+        return servo_call(robot.set_gait, req.name)
 
     @app.post("/api/body")
     def body(req: BodyReq):
