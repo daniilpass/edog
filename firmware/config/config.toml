@@ -66,22 +66,22 @@ ref_deg = 90.0            # корпус голени под прямым угл
 side = "left"
 x_mm = 56.2
 knee_dir = -1
-hip = { channel = 0, dir = 1 }
-knee = { channel = 1, dir = 1 }
+hip = { channel = 8, dir = 1 }
+knee = { channel = 9, dir = 1 }
 
 [legs.FR]
 side = "right"
 x_mm = 56.2
 knee_dir = -1
-hip = { channel = 2, dir = -1 }
-knee = { channel = 3, dir = -1 }
+hip = { channel = 4, dir = -1 }
+knee = { channel = 5, dir = -1 }
 
 [legs.RL]
 side = "left"
 x_mm = -56.2
 knee_dir = -1
-hip = { channel = 4, dir = 1 }
-knee = { channel = 5, dir = 1 }
+hip = { channel = 10, dir = 1 }
+knee = { channel = 11, dir = 1 }
 
 [legs.RR]
 side = "right"

@@ -48,7 +48,7 @@ def test_disabled_robot_writes_nothing(robot):
 def test_enable_writes_all_channels(robot):
     robot.set_enabled(True)
     robot.step(0.02)
-    assert sorted(robot.driver.pulses) == list(range(8))
+    assert sorted(robot.driver.pulses) == sorted(s.cfg.channel for s in robot.servos.values())
     robot.set_enabled(False)
     assert all(v is None for v in robot.driver.pulses.values())
 
