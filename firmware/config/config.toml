@@ -66,28 +66,28 @@ ref_deg = 90.0            # корпус голени под прямым угл
 side = "left"
 x_mm = 56.2
 knee_dir = -1
-hip = { channel = 8, dir = 1 }
+hip = { channel = 8, dir = -1 }
 knee = { channel = 9, dir = 1 }
 
 [legs.FR]
 side = "right"
 x_mm = 56.2
 knee_dir = -1
-hip = { channel = 4, dir = -1 }
+hip = { channel = 4, dir = 1 }
 knee = { channel = 5, dir = -1 }
 
 [legs.RL]
 side = "left"
 x_mm = -56.2
 knee_dir = -1
-hip = { channel = 10, dir = 1 }
+hip = { channel = 10, dir = -1 }
 knee = { channel = 11, dir = 1 }
 
 [legs.RR]
 side = "right"
 x_mm = -56.2
 knee_dir = -1
-hip = { channel = 6, dir = -1 }
+hip = { channel = 6, dir = 1 }
 knee = { channel = 7, dir = -1 }
 
 # Геймпад (evdev, стандартная раскладка Linux).
