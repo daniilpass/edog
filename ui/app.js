@@ -4,10 +4,10 @@ const $ = id => document.getElementById(id);
 const LEG_NAMES = { FL: 'перед. левая', FR: 'перед. правая', RL: 'задн. левая', RR: 'задн. правая' };
 const JOINT_NAMES = { hip: 'бедро', knee: 'колено' };
 const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко', mount: 'Монтаж' };
-const MOVE_NAMES = { jump: 'Прыжок' };
+const MOVE_NAMES = { jump: 'Прыжок', joy: 'Радость' };
 const DPAD_LABELS = { up: 'крестовина ↑', down: 'крестовина ↓', left: 'крестовина ←', right: 'крестовина →' };
 const ACTION_NAMES = {
-  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', mount: 'монтаж', jump: 'прыжок',
+  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', mount: 'монтаж', jump: 'прыжок', joy: 'радость',
   torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп',
 };
 const AXIS_NAMES = { drive: 'вперёд/назад', turn: 'поворот', pitch: 'тангаж', roll: 'крен', height_down: 'опустить, пока нажат', height_up: 'поднять, пока нажат' };

@@ -220,3 +220,4 @@ BTN_SELECT = "estop"        # Back / Share
 
 [gamepad.dpad]
 up = "jump"                 # крестовина вверх: прыжок
+down = "joy"                # крестовина вниз: радость

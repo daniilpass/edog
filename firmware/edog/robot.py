@@ -261,12 +261,15 @@ class Robot:
         """Движения: шаги (корпус, сколько держать, с; скорость серво, °/с, или None — обычная).
         После движения собака встаёт в стойку."""
         m = self.m
+        poses = self.poses()
         return {
             "jump": [   # прыжок вверх: неглубоко присесть, резкий толчок, потом стойка (ноги не поджимаются)
                 (Body(m["stand_height_mm"] - 10), 0.25, None),
                 # толчок до полностью прямой ноги (IK прижмёт к досягаемости), дальше max_height_mm
                 (Body(self.g["femur_mm"] + self.g["tibia_mm"]), 0.12, MOVE_SPEED_DPS),
             ],
+            # радость: высоко ↔ стойка 4 раза, на полной скорости серво без пауз
+            "joy": [(replace(poses[p]), 0.12, MOVE_SPEED_DPS) for _ in range(4) for p in ("high", "stand")],
         }
 
     def start_move(self, name: str) -> None:

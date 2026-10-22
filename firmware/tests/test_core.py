@@ -517,6 +517,19 @@ def test_jump_ends_in_stand(robot):
     assert robot.move_name is None and robot.pose_name == "stand"
 
 
+def test_joy_high_stand_four_times(robot):
+    robot.set_enabled(True)
+    robot.start_move("joy")
+    high, stand = robot.m["max_height_mm"] - 4, robot.m["stand_height_mm"]
+    heights = [robot.body.height]
+    for _ in range(100):
+        robot.step(0.02)
+        heights.append(robot.body.height)
+    ups = sum(1 for a, b in zip(heights, heights[1:]) if a == stand and b == high)
+    assert heights[0] == high and ups == 3   # первый подъём сразу при старте
+    assert robot.move_name is None and robot.pose_name == "stand"
+
+
 def test_pose_interrupts_move(robot):
     robot.set_enabled(True)
     robot.start_move("jump")

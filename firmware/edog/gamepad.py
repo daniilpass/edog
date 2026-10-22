@@ -73,7 +73,8 @@ class Gamepad:
     def _action(self, action: str) -> None:
         r = self.robot
         if action in r.pose_names():
-            r.set_pose(action)
+            # Повторное нажатие кнопки текущей позы возвращает в стойку.
+            r.set_pose("stand" if r.pose_name == action else action)
         elif action in r.moves():
             try:
                 r.start_move(action)

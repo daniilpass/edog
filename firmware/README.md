@@ -107,6 +107,7 @@ sudo systemctl restart edog
 | Правый стик | наклон корпуса (тангаж/крен) |
 | Левый / правый курок | опускать / поднимать, пока нажат |
 | Крестовина ↑ | прыжок |
+| Крестовина ↓ | радость |
 | A | стойка |
 | B | сидеть |
 | X | лечь |
@@ -128,7 +129,7 @@ sudo systemctl restart edog
 | POST | `/api/estop` | аварийный стоп |
 | POST | `/api/mode` `{mode}` | `stand` / `manual` |
 | POST | `/api/pose/{name}` | `stand`, `sit`, `lie`, `high` |
-| POST | `/api/move/{name}` | движение `jump`; после него — стойка |
+| POST | `/api/move/{name}` | движение `jump`, `joy` (радость: высоко ↔ стойка 4 раза); после него — стойка |
 | POST | `/api/body` `{height, pitch, roll}` | положение корпуса |
 | POST | `/api/drive` `{vx, turn}` | ходьба, −1…1; гаснет через 0.5 с без повтора |
 | PUT | `/api/servos/{id}` `{angle}` или `{joint}` | угол серво или сустава (ручной режим) |
