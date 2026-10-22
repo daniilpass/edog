@@ -5,17 +5,19 @@ const LEG_NAMES = { FL: 'перед. левая', FR: 'перед. правая'
 const JOINT_NAMES = { hip: 'бедро', knee: 'колено' };
 const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко' };
 const ACTION_NAMES = {
-  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', walk_toggle: 'ходьба вкл/выкл',
+  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко',
   torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп',
 };
-const AXIS_NAMES = { drive: 'вперёд/назад', turn: 'поворот', pitch: 'тангаж', roll: 'крен', height: 'высота (крестовина)' };
+const AXIS_NAMES = { drive: 'вперёд/назад', turn: 'поворот', pitch: 'тангаж', roll: 'крен', height_down: 'опустить, пока нажат', height_up: 'поднять, пока нажат' };
 const BUTTON_LABELS = {
-  BTN_SOUTH: 'A / ✕', BTN_EAST: 'B / ○', BTN_WEST: 'X / □', BTN_NORTH: 'Y / △',
+  BTN_A: 'A', BTN_B: 'B', BTN_X: 'X', BTN_Y: 'Y',
+  BTN_SOUTH: 'A / ✕', BTN_EAST: 'B / ○', BTN_WEST: 'Y / □', BTN_NORTH: 'X / △',
   BTN_START: 'Start / Options', BTN_SELECT: 'Back / Share', BTN_TL: 'LB / L1', BTN_TR: 'RB / R1',
 };
 const AXIS_LABELS = {
   ABS_X: 'левый стик ↔', ABS_Y: 'левый стик ↕', ABS_RX: 'правый стик ↔', ABS_RY: 'правый стик ↕',
-  ABS_Z: 'ось Z', ABS_RZ: 'ось RZ', ABS_HAT0Y: 'крестовина ↕', ABS_HAT0X: 'крестовина ↔',
+  ABS_Z: 'правый стик ↔', ABS_RZ: 'правый стик ↕', ABS_HAT0Y: 'крестовина ↕', ABS_HAT0X: 'крестовина ↔',
+  ABS_BRAKE: 'левый курок', ABS_GAS: 'правый курок',
 };
 
 // Адрес собаки (API на Raspberry Pi). Портал хостится отдельно, на ПК (ui/serve.py).
@@ -171,10 +173,8 @@ function render(s) {
     $(`o-${k}`).textContent = k === 'height' ? `${v.toFixed(0)} мм` : `${v.toFixed(0)}°`;
   }
   const d = s.drive;
-  $('drive-info').textContent = s.mode === 'walk'
-    ? `vx ${d.vx.toFixed(2)} · поворот ${d.turn.toFixed(2)} · ${d.source === 'web' ? 'портал' : 'геймпад'}`
-    : 'Для движения включите режим «Ходьба».';
-  $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', walk: 'ходьба', manual: 'ручной', demo: 'демо' }[s.mode]}`;
+  $('drive-info').textContent = `vx ${d.vx.toFixed(2)} · поворот ${d.turn.toFixed(2)} · ${d.source === 'web' ? 'портал' : 'геймпад'}`;
+  $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', manual: 'ручной', demo: 'демо' }[s.mode]}`;
   renderDemo(s);
   renderGait(s.gait);
 

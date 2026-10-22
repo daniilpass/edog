@@ -28,6 +28,15 @@ tar -czf - \
       [ -z \"\$empty\" ] || { echo \"==> ПУСТЫЕ ФАЙЛЫ после распаковки:\"; echo \"\$empty\"; exit 1; }
       echo \"==> на Pi: \$(du -sh --exclude=.venv . | cut -f1) без venv\"
       if systemctl list-unit-files edog.service >/dev/null 2>&1; then
+        # безопасный перезапуск: при выключении серво собака сначала встаёт в монтажное положение,
+        # ждём, пока сигнал снимется (иначе она падает под своим весом)
+        if curl -sf http://127.0.0.1:8080/api/state | grep -q '\"enabled\":true'; then
+          echo '==> серво включены: в монтажное положение и выключение'
+          curl -sf -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"enabled\":false}' http://127.0.0.1:8080/api/enable || true
+          for i in \$(seq 20); do curl -sf http://127.0.0.1:8080/api/state | grep -q '\"enabled\":false' && break; sleep 0.5; done
+          curl -sf http://127.0.0.1:8080/api/state | grep -q '\"enabled\":false' \\
+            && echo '==> сигнал снят' || echo '==> сигнал не снялся за 10 с — перезапуск всё равно'
+        fi
         sudo -n systemctl restart edog
         # ждём не процесс, а ответ API: на Pi 3B+ (особенно со сброшенной частотой) старт занимает несколько секунд
         for i in \$(seq 30); do curl -sf -o /dev/null http://127.0.0.1:8080/api/state && break; sleep 1; done

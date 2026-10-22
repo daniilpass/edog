@@ -14,9 +14,10 @@ from .power import PowerCfg
 
 log = logging.getLogger(__name__)
 
-MODES = ("stand", "walk", "manual")
+MODES = ("stand", "manual")
 TEST_ACTIONS = ("center", "ref", "sweep", "stop")
 SWEEP_SPEED_DPS = 60
+POWER_DOWN_TIMEOUT_S = 5.0   # не дошла до монтажного положения за это время (нога у рамы) — сигнал снимается всё равно
 # Рысь: диагональные пары ног в противофазе.
 TROT_PHASE = {"FL": 0.0, "RR": 0.0, "FR": 0.5, "RL": 0.5}
 
@@ -116,6 +117,7 @@ class Robot:
         self.body = Body(height=self.m["stand_height_mm"])
         self.tilt = (0.0, 0.0)          # смещение pitch/roll с геймпада, доля от max_tilt
         self.pad_drive = (0.0, 0.0)     # vx, turn с геймпада
+        self.height_rate = 0.0          # курки: −1 вниз … 1 вверх, доля от height_speed_mm_s
         self.web_drive = (0.0, 0.0)
         self.web_drive_t = 0.0
         self.phase = 0.0
@@ -124,6 +126,7 @@ class Robot:
         self.power = PowerCfg.from_dict(cfg.power)
         self.demo: Demo | None = None
         self.signal: set[str] = set()   # серво, на каналы которых сейчас идёт импульс
+        self.powering_down: float | None = None   # с какого времени встаёт в монтажное положение перед снятием сигнала
 
         # Узел колена не поднимается выше плоскости рамы (см. collision.py).
         hull = cfg.path.with_name("leg_hull.json")
@@ -150,15 +153,39 @@ class Robot:
         }
 
     def set_enabled(self, enabled: bool) -> None:
+        """Выключение из стойки плавное: суставы сначала встают в монтажное положение (ref_deg),
+        потом снимается сигнал — иначе без удержания серво собака падает под своим весом.
+        В ручном режиме — сразу. Включение — из монтажного положения плавно в стойку."""
         self.stop_demo()
+        if enabled and self.powering_down is not None:
+            self.powering_down = None   # повторное включение отменяет выключение
+            self.set_pose("stand")
+            return
         if enabled == self.enabled:
             return
+        if not enabled and self.mode != "manual":
+            if self.powering_down is None:
+                self._stop_tests()
+                for s in self.servos.values():
+                    s.set_target(s.joint_to_servo(s.cfg.ref_deg))
+                self.mode = "manual"   # цели заданы напрямую, контур их не пересчитывает
+                self.pose_name = None
+                self.powering_down = time.monotonic()
+            return
+        self._switch(enabled)
+        if enabled:
+            self.set_pose("stand")
+
+    def _switch(self, enabled: bool) -> None:
+        self.powering_down = None
         if enabled:
             self.power.check(self.installed_count())
         self.enabled = enabled
         if enabled:
-            # Реальное положение серво неизвестно: при включении они встают в цель рывком.
+            # Реальное положение серво неизвестно. Считаем, что они в монтажном положении —
+            # в нём собака остаётся после выключения; оттуда контур плавно ведёт в стойку.
             for s in self.servos.values():
+                s.set_target(s.joint_to_servo(s.cfg.ref_deg))
                 s.current = s.target
             self._write()
         else:
@@ -168,7 +195,9 @@ class Robot:
 
     def estop(self) -> None:
         self.web_drive = self.pad_drive = (0.0, 0.0)
-        self.set_enabled(False)
+        self.stop_demo()
+        if self.enabled:
+            self._switch(False)
 
     def set_mode(self, mode: str) -> None:
         if mode not in MODES:
@@ -191,10 +220,6 @@ class Robot:
         self._stop_tests()
         if self.mode == "manual":
             self.mode = "stand"
-
-    def toggle_walk(self) -> None:
-        self.stop_demo()
-        self.mode = "stand" if self.mode == "walk" else "walk"
 
     def set_body(self, height=None, pitch=None, roll=None) -> None:
         m = self.m
@@ -362,7 +387,7 @@ class Robot:
         roll = clamp(self.body.roll + self.tilt[1] * max_roll, -max_roll, max_roll)
         half_width = self.g["body_width_mm"] / 2
         (vx, turn), _ = self.drive()
-        walking = self.mode == "walk" and (abs(vx) > 0.05 or abs(turn) > 0.05)
+        walking = abs(vx) > 0.05 or abs(turn) > 0.05
         if walking:
             self.phase = (self.phase + gait["gait_hz"] * dt) % 1.0
 
@@ -390,8 +415,19 @@ class Robot:
                     s = self.servos[f"{name}_{joint}"]
                     s.set_target(s.joint_to_servo(angle))
             return
-        if self.mode == "manual":
+        (vx, turn), _ = self.drive()
+        if self.powering_down is not None:
+            vx = turn = 0.0   # встаёт в монтажное положение перед выключением: без ходьбы
+        if abs(vx) > 0.05 or abs(turn) > 0.05:
+            if self.mode == "manual" or self.pose_name != "stand":
+                self.set_pose("stand")   # ходит только из стойки: стик или стрелки переводят в неё
+        elif self.mode == "manual":
             return
+        if self.height_rate and self.powering_down is None:
+            # Поза при этом не меняется: из стойки с другой высотой ходить можно.
+            m = self.m
+            h = self.body.height + self.height_rate * m.get("height_speed_mm_s", 30.0) * dt
+            self.body.height = clamp(h, m["min_height_mm"], m["max_height_mm"])
         for name, (x, z) in self.feet(dt).items():
             leg = self.legs[name]
             hip, knee = ik(x, z, self.g["femur_mm"], self.g["tibia_mm"], leg.knee_dir,
@@ -432,6 +468,10 @@ class Robot:
         self._guard_legs(before)
         if self.demo and self.demo.finished:
             self.stop_demo()
+        if self.powering_down is not None:
+            settled = all(abs(s.target - s.current) < 0.5 for s in self.servos.values())
+            if settled or time.monotonic() - self.powering_down > POWER_DOWN_TIMEOUT_S:
+                self._switch(False)
         if self.enabled:
             self._write()
 
@@ -498,6 +538,7 @@ class Robot:
         return {
             "t": time.time(),
             "enabled": self.enabled,
+            "powering_down": self.powering_down is not None,
             "mode": self.mode,
             "pose": self.pose_name,
             "body": asdict(self.body),

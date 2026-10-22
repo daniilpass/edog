@@ -51,6 +51,8 @@ def test_enable_writes_all_channels(robot):
     robot.step(0.02)
     assert sorted(robot.driver.pulses) == sorted(s.cfg.channel for s in robot.servos.values())
     robot.set_enabled(False)
+    for _ in range(500):
+        robot.step(0.02)
     assert all(v is None for v in robot.driver.pulses.values())
 
 
@@ -78,7 +80,6 @@ def test_calibrate_and_save(robot):
 
 
 def test_walk_moves_feet(robot):
-    robot.set_mode("walk")
     robot.set_web_drive(1, 0)
     xs = {robot.feet(0.05)["FL"][0] for _ in range(10)}
     assert len(xs) > 5
@@ -226,7 +227,7 @@ def test_frame_guard_allows_all_poses_and_walk(guarded):
         for _ in range(100):
             r.step(0.02)
         assert not any(r.blocked.values()), name
-    r.set_pose("stand"); r.set_mode("walk")
+    r.set_pose("stand")
     for _ in range(200):
         r.set_web_drive(1, 0); r.step(0.02)
         assert not any(r.blocked.values())
@@ -349,9 +350,75 @@ def test_walk_with_every_gait(guarded, gait):
     r = guarded
     r.set_gait(gait)
     r.set_enabled(True)
-    r.set_mode("walk")
     r.set_web_drive(1.0, 0.0)
     for _ in range(200):
         r.web_drive_t = time.monotonic()
         r.step(0.02)
         assert not any(r.blocked.values()) and not any(s.clamped for s in r.servos.values())
+
+
+def test_drive_leaves_manual_mode(robot):
+    robot.set_mode("manual")
+    robot.set_web_drive(1, 0)
+    robot._update_targets(0.02)
+    assert robot.mode == "stand"
+
+
+def test_gamepad_left_stick_dominant_axis(robot):
+    from edog.gamepad import Gamepad
+    pad = Gamepad(robot, {})
+    pad.values = {"drive": -0.8, "turn": 0.3, "pitch": 0.0, "roll": 0.0, "height_down": 0.0, "height_up": 0.0}
+    pad._apply()
+    assert robot.pad_drive == (1.0, 0.0)
+    pad.values.update(drive=-0.2, turn=0.5)
+    pad._apply()
+    assert robot.pad_drive == (0.0, 1.0)
+
+
+def test_drive_switches_to_stand_pose(robot):
+    robot.set_pose("sit")
+    robot.set_web_drive(1, 0)
+    robot._update_targets(0.02)
+    assert robot.pose_name == "stand"
+
+
+def test_power_off_goes_to_mounting_position_first(robot):
+    robot.set_enabled(True)
+    robot.set_enabled(False)
+    assert robot.enabled and robot.powering_down is not None
+    for _ in range(500):
+        robot.step(0.02)
+        if not robot.enabled:
+            break
+    assert not robot.enabled and robot.powering_down is None
+    for s in robot.servos.values():
+        assert abs(s.servo_to_joint(s.current) - s.cfg.ref_deg) < 1
+
+
+def test_estop_cuts_signal_at_once(robot):
+    robot.set_enabled(True)
+    robot.estop()
+    assert not robot.enabled
+
+
+def test_power_on_starts_at_mounting_position_then_stands(robot):
+    robot.set_pose("sit")
+    robot.set_enabled(True)
+    assert robot.pose_name == "stand"
+    for s in robot.servos.values():
+        assert abs(s.servo_to_joint(s.current) - s.cfg.ref_deg) < 1
+    for _ in range(500):
+        robot.step(0.02)
+    assert all(abs(s.target - s.current) < 0.5 for s in robot.servos.values())
+
+
+def test_trigger_changes_height_while_held(robot):
+    h = robot.body.height
+    robot.height_rate = -1.0
+    for _ in range(10):
+        robot.step(0.02)
+    assert robot.body.height < h and robot.pose_name == "stand"
+    robot.height_rate = 0.0
+    low = robot.body.height
+    robot.step(0.02)
+    assert robot.body.height == low

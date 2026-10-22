@@ -21,7 +21,7 @@ class EnableReq(BaseModel):
 
 
 class ModeReq(BaseModel):
-    mode: Literal["stand", "walk", "manual"]
+    mode: Literal["stand", "manual"]
 
 
 class BodyReq(BaseModel):

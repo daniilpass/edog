@@ -22,11 +22,12 @@ body_length_mm = 200.0
 body_width_mm = 95.0      # колея: расстояние между лапами левого и правого борта
 
 [motion]
-loop_hz = 50
+loop_hz = 100             # чаще ШИМ 50 Гц: каждый период серво получает свежий импульс, без пропусков
 max_speed_dps = 300       # ограничение скорости поворота серво, °/с
 stand_height_mm = 70.0    # высота оси бедра над полом в стойке
 min_height_mm = 35.0
 max_height_mm = 88.0
+height_speed_mm_s = 30.0  # курки: скорость подъёма/опускания при нажатии до упора
 max_tilt_deg = 15.0       # тангаж: предел и для команды, и для правого стика
 max_roll_deg = 8.0        # крен: ноги без отведения, при крене лапы скользят вбок (~1.3 мм/°)
 gait = "base"             # профиль ходьбы по умолчанию (см. [gaits]); выбор из портала — в calibration.json
@@ -127,19 +128,22 @@ knee = { channel = 7, dir = -1 }
 # Геймпад (evdev, стандартная раскладка Linux).
 # Имена кодов: evtest /dev/input/eventN
 [gamepad]
-deadzone = 0.12
+deadzone = 0.25          # доля хода стика от центра, которая не считается
 
 [gamepad.axes]
 drive = "ABS_Y"           # левый стик: вперёд/назад
 turn = "ABS_X"            # левый стик: поворот
-pitch = "ABS_RY"          # правый стик: тангаж (у Xbox по BT бывает ABS_RZ)
-roll = "ABS_RX"           # правый стик: крен (у Xbox по BT бывает ABS_Z)
-height = "ABS_HAT0Y"      # крестовина вверх/вниз: высота
+pitch = "ABS_RZ"          # правый стик ↕: тангаж (Xbox по BT; у DualShock и др. — ABS_RY)
+roll = "ABS_Z"            # правый стик ↔: крен (Xbox по BT; у DualShock и др. — ABS_RX)
+height_down = "ABS_BRAKE" # левый курок: опускать, пока нажат (скорость — от силы нажатия)
+height_up = "ABS_GAS"     # правый курок: поднимать
 
 [gamepad.buttons]
-BTN_SOUTH = "stand"         # A / ✕
-BTN_EAST = "sit"            # B / ○
-BTN_WEST = "lie"            # X / □
-BTN_NORTH = "walk_toggle"   # Y / △
+# Имена по подписям Xbox: у него по BT X = код 307 (BTN_X = BTN_NORTH), Y = 308 (BTN_Y = BTN_WEST).
+# У DualShock/DualSense □ = BTN_WEST = BTN_Y и △ = BTN_NORTH = BTN_X — для них X и Y поменять местами.
+BTN_A = "stand"             # A
+BTN_B = "sit"               # B
+BTN_X = "lie"               # X
+BTN_Y = "high"              # Y
 BTN_START = "torque_toggle" # Start / Options
 BTN_SELECT = "estop"        # Back / Share
