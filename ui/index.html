@@ -67,6 +67,16 @@
     </div>
 
     <div class="card">
+      <h2>Поправка наклона</h2>
+      <div class="calib" title="Огрехи сборки: на сколько довернуть корпус, чтобы он стоял ровно. Действует всегда, сохраняется кнопкой «Сохранить»">
+        <label>Тангаж, ° (+ нос вверх) <input type="number" id="trim-pitch" min="-10" max="10" step="0.5"></label>
+        <label>Крен, ° (+ правый борт ниже) <input type="number" id="trim-roll" min="-10" max="10" step="0.5"></label>
+      </div>
+      <div class="row"><button id="trim-apply">Применить</button></div>
+      <div class="muted" id="trim-info"></div>
+    </div>
+
+    <div class="card">
       <h2>Питание серво</h2>
       <div class="calib">
         <label>Лимит, А <input type="number" id="pw-limit" min="0" step="0.1"></label>

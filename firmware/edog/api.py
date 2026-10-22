@@ -58,6 +58,11 @@ class PowerReq(BaseModel):
     servo_a: float | None = Field(None, gt=0, le=5, description="пиковый ток одного серво, А")
 
 
+class TrimReq(BaseModel):
+    pitch_deg: float | None = Field(None, ge=-10, le=10, description="поправка тангажа, °, + — нос вверх")
+    roll_deg: float | None = Field(None, ge=-10, le=10, description="поправка крена, °, + — правый борт ниже")
+
+
 class DemoReq(BaseModel):
     action: Literal["start", "stop"]
     cycles: int = Field(4, ge=1, le=20, description="сколько полных циклов шага делает каждая нога (группа)")
@@ -172,6 +177,10 @@ def create_app(robot) -> tuple[FastAPI, callable]:
     @app.patch("/api/power")
     def patch_power(req: PowerReq):
         return servo_call(robot.update_power, req.limit_a, req.servo_a)
+
+    @app.patch("/api/trim")
+    def patch_trim(req: TrimReq):
+        return servo_call(robot.update_trim, req.pitch_deg, req.roll_deg)
 
     @app.get("/api/bluetooth/scan")
     async def bt_scan(seconds: int = 8):

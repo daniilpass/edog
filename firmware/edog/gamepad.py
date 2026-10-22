@@ -72,7 +72,7 @@ class Gamepad:
 
     def _action(self, action: str) -> None:
         r = self.robot
-        if action in r.poses():
+        if action in r.pose_names():
             r.set_pose(action)
         elif action in r.moves():
             try:

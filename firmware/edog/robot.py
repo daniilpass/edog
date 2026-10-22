@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict, dataclass, replace
-from math import inf, pi, sin
+from math import cos, inf, pi, sin
 
 from .collision import FrameGuard
 from .config import JOINTS, Config, save_calibration
@@ -20,32 +20,126 @@ SWEEP_SPEED_DPS = 60
 # Резкие шаги движений без ограничения скорости: цель сразу в конце хода, серво жмёт
 # с полным моментом с первого мгновения (при плавной цели ошибка мала — и момент тоже).
 MOVE_SPEED_DPS = inf
+TRIM_MAX_DEG = 10.0          # поправка наклона корпуса на огрехи сборки, °
+WALK_RAMP_S = 0.5            # переход стойка ↔ высота и вынос лап профиля ходьбы, с
 POWER_DOWN_TIMEOUT_S = 5.0   # не дошла до монтажного положения за это время (нога у рамы) — сигнал снимается всё равно
-# Рысь: диагональные пары ног в противофазе.
-TROT_PHASE = {"FL": 0.0, "RR": 0.0, "FR": 0.5, "RL": 0.5}
+# Походки (pattern в профиле): сдвиг фазы каждой ноги и доля цикла в воздухе (swing, в профиле можно своё).
+PATTERNS = {
+    # рысь: диагональные пары в противофазе — в каждый момент на полу только две лапы
+    "trot": {"phase": {"FL": 0.0, "RR": 0.0, "FR": 0.5, "RL": 0.5}, "swing": 0.5},
+    # шаг: ноги по одной, на полу всегда хотя бы три лапы; фазы — по расписанию crawl_schedule()
+    "crawl": {"swing": 0.1},
+}
+LEGS = ("FL", "FR", "RL", "RR")
 
 
 def clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-def step_offset(p: float, stride: float, lift: float) -> tuple[float, float]:
-    """Смещение лапы (вперёд, вверх), мм, в фазе шага p ∈ [0, 1)."""
-    if p < 0.5:   # перенос: лапа в воздухе идёт вперёд
-        s = p / 0.5
+def step_offset(p: float, stride: float, lift: float, swing: float = 0.5) -> tuple[float, float]:
+    """Смещение лапы (вперёд, вверх), мм, в фазе шага p ∈ [0, 1); swing — доля цикла в воздухе."""
+    if p < swing:   # перенос: лапа в воздухе идёт вперёд
+        s = p / swing
         return stride * (s - 0.5), lift * sin(pi * s)
-    s = (p - 0.5) / 0.5   # опора: лапа на земле уходит назад
+    s = (p - swing) / (1 - swing)   # опора: лапа на земле уходит назад
     return stride * (0.5 - s), 0.0
+
+
+def gait_swing(gait: dict) -> float:
+    return gait.get("swing", PATTERNS[gait.get("pattern", "trot")]["swing"])
+
+
+def leg_step(gait: dict, leg: str, phase: float, stride: float, lift: float,
+             sway: float = 1.0) -> tuple[float, float]:
+    """Смещение лапы (вперёд, вверх) от нейтрали в системе корпуса, мм, с качанием корпуса (sway — его доля)."""
+    dx, dz = step_offset((phase - leg_start(gait, leg)) % 1.0, stride, lift, gait_swing(gait))
+    return dx - sway * body_sway(gait, phase)[0], dz
+
+
+def leg_start(gait: dict, leg: str) -> float:
+    """Фаза цикла, в которую нога отрывается от пола."""
+    if gait.get("pattern", "trot") == "crawl":
+        return crawl_schedule(gait)[0][leg]
+    return -PATTERNS["trot"]["phase"][leg]
+
+
+def swing_progress(gait: dict, leg: str, phase: float) -> float | None:
+    """Доля переноса 0…1, если нога сейчас в воздухе, иначе None."""
+    p = (phase - leg_start(gait, leg)) % 1.0
+    swing = gait_swing(gait)
+    return p / swing if p < swing else None
+
+
+# Шаг. Корпус качается, чтобы центр масс был внутри треугольника опоры: вперёд-назад (sway_mm) —
+# пока несёт заднюю ногу, вперёд, переднюю — назад; вбок креном (sway_roll_deg): у ног нет отведения,
+# поэтому при крене стоящие лапы остаются на месте, а корпус уезжает вбок на ~высоту·sin(крен).
+# Ноги одного борта переносятся подряд, с короткой паузой gap (в ней корпус переезжает только
+# вперёд-назад): сначала левые RL, FL (корпус сдвинут вправо), потом правые RR, FR (влево).
+# Между бортами — долгая пауза на всех четырёх лапах: крен перекладывается медленно,
+# и последнюю долю паузы (CRAWL_SETTLE) корпус стоит, чтобы раскачка успела затихнуть.
+CRAWL_SWAY = {"RL": (1, 1), "FL": (-1, 1), "RR": (1, -1), "FR": (-1, -1)}   # (вперёд, крен) на перенос ноги
+CRAWL_SETTLE = 0.3
+
+
+def crawl_schedule(gait: dict) -> tuple[dict[str, float], list[tuple[float, float, str, str]]]:
+    """Начало переноса каждой ноги (доля цикла) и отрезки переездов корпуса (начало, длина, от ноги, к ноге)."""
+    swing = gait_swing(gait)
+    gap = gait.get("gap", swing)
+    side = (1 - 4 * swing - 2 * gap) / 2      # переезд с борта на борт
+    starts, moves, t = {}, [], 0.0
+    for prev, move, leg in (("FR", side, "RL"), ("RL", gap, "FL"), ("FL", side, "RR"), ("RR", gap, "FR")):
+        moves.append((t, move, prev, leg))
+        starts[leg] = t + move
+        t += move + swing
+    return starts, moves
+
+
+def body_sway(gait: dict, phase: float) -> tuple[float, float]:
+    """Качание корпуса при шаге: (сдвиг вперёд, мм; крен, °, + — правый борт ниже, корпус уезжает вправо).
+    Пока нога в воздухе, корпус стоит в своём крайнем положении для неё; к следующему переезжает,
+    пока на полу все четыре лапы."""
+    if gait.get("pattern", "trot") != "crawl":
+        return 0.0, 0.0
+    phase %= 1.0
+    starts, moves = crawl_schedule(gait)
+    a = b = None
+    for start, length, prev, leg in moves:
+        if start <= phase < start + length:
+            t = min(1.0, (phase - start) / (length * (1 - CRAWL_SETTLE)))
+            a, b, t = CRAWL_SWAY[prev], CRAWL_SWAY[leg], t * t * (3 - 2 * t)
+            break
+    if a is None:   # нога в воздухе: держим её положение
+        leg = max((s, leg) for leg, s in starts.items() if s <= phase)[1]
+        a = b = CRAWL_SWAY[leg]
+        t = 0.0
+    shift, roll = gait.get("sway_mm", 0.0), gait.get("sway_roll_deg", 0.0)
+    return shift * (a[0] + t * (b[0] - a[0])), roll * (a[1] + t * (b[1] - a[1]))
 
 
 def gait_stats(gait: dict, height: float, g: dict, knee_dir: int, speed_dps: float, samples: int = 400) -> dict:
     """Чем профиль отличается на суставах: размах бедра и колена, °, и пиковая скорость, °/с,
-    при шаге полной длины на высоте height. limited — пик выше ограничения скорости серво,
-    то есть ограничитель срежет шаг и реальный размах будет меньше расчётного."""
+    при шаге полной длины на высоте профиля (без неё — height), по самой быстрой ноге.
+    limited — пик выше ограничения скорости серво, то есть ограничитель срежет шаг
+    и реальный размах будет меньше расчётного."""
+    height = gait.get("height_mm", height)
+    result = {}
+    for leg in LEGS:
+        stats = _leg_stats(gait, leg, height, g, knee_dir, samples)
+        for key, value in stats.items():
+            result[key] = max(result.get(key, value), value)
+    result["speed_dps"] = speed_dps
+    # корпус едет со скоростью лапы в опоре: шаг за (1 − swing) цикла
+    result["speed_mm_s"] = round(gait["stride_mm"] * gait["gait_hz"] / (1 - gait_swing(gait)), 1)
+    result["limited"] = max(result["hip_peak_dps"], result["knee_peak_dps"]) > speed_dps
+    return result
+
+
+def _leg_stats(gait: dict, leg: str, height: float, g: dict, knee_dir: int, samples: int) -> dict:
     angles = []
     for i in range(samples + 1):
-        dx, dz = step_offset(i / samples % 1.0, gait["stride_mm"], gait["lift_mm"])
-        x, z, _ = foot_in_leg((dx, 0.0, dz), (0.0, 0.0, 0.0), height, 0.0, 0.0)
+        dx, dz = leg_step(gait, leg, i / samples % 1.0, gait["stride_mm"], gait["lift_mm"])
+        x, z, _ = foot_in_leg((gait.get("foot_x_mm", 0.0) + dx, 0.0, dz), (0.0, 0.0, 0.0), height, 0.0, 0.0)
         angles.append(ik(x, z, g["femur_mm"], g["tibia_mm"], knee_dir, g.get("tibia_bend_deg", 0.0)))
     dt = 1.0 / (gait["gait_hz"] * samples)
     result = {}
@@ -54,8 +148,6 @@ def gait_stats(gait: dict, height: float, g: dict, knee_dir: int, speed_dps: flo
         peak = max(abs(b[j] - a[j]) for a, b in zip(angles, angles[1:])) / dt
         result[f"{joint}_swing"] = round(max(series) - min(series), 1)
         result[f"{joint}_peak_dps"] = round(peak)
-    result["speed_dps"] = speed_dps
-    result["limited"] = max(result["hip_peak_dps"], result["knee_peak_dps"]) > speed_dps
     return result
 
 
@@ -124,6 +216,8 @@ class Robot:
         self.web_drive = (0.0, 0.0)
         self.web_drive_t = 0.0
         self.phase = 0.0
+        self.walk_blend = 0.0           # 0 — стойка, 1 — высота и вынос лап профиля ходьбы
+        self.forward_blend = 0.0        # 0 — лапы под осью бедра, 1 — вынос лап профиля (только вперёд)
         self.gait_name = cfg.gait
         self.gamepad = {"connected": False, "name": None}
         self.power = PowerCfg.from_dict(cfg.power)
@@ -158,6 +252,10 @@ class Robot:
             "lie": Body(m["min_height_mm"]),
             "high": Body(m["max_height_mm"] - 4),
         }
+
+    def pose_names(self) -> list[str]:
+        # mount — монтажное положение: задано углами суставов (ref_deg), а не корпусом
+        return [*self.poses(), "mount"]
 
     def moves(self) -> dict[str, list[tuple[Body, float, float | None]]]:
         """Движения: шаги (корпус, сколько держать, с; скорость серво, °/с, или None — обычная).
@@ -249,6 +347,15 @@ class Robot:
             s.queue.clear()
 
     def set_pose(self, name: str) -> None:
+        if name == "mount":
+            # как перед выключением: суставы в ref_deg; ручной режим — контур углы не пересчитывает
+            self.stop_demo()
+            self._stop_tests()
+            for s in self.servos.values():
+                s.set_target(s.joint_to_servo(s.cfg.ref_deg))
+            self.mode = "manual"
+            self.pose_name = name
+            return
         poses = self.poses()
         if name not in poses:
             raise KeyError(name)
@@ -344,7 +451,15 @@ class Robot:
         s.cfg.zero = round(s.current - s.cfg.dir * joint_deg, 1)
 
     def save_calibration(self) -> str:
-        return str(save_calibration(self.cfg, self.servos.values(), asdict(self.power), self.gait_name))
+        return str(save_calibration(self.cfg, self.servos.values(), asdict(self.power), self.gait_name, self.cfg.trim))
+
+    def update_trim(self, pitch_deg: float | None = None, roll_deg: float | None = None) -> None:
+        """Поправка наклона корпуса из портала, °. В файл — save_calibration()."""
+        for key, value in (("pitch_deg", pitch_deg), ("roll_deg", roll_deg)):
+            if value is not None:
+                if abs(value) > TRIM_MAX_DEG:
+                    raise ValueError(f"поправка наклона: не больше ±{TRIM_MAX_DEG}°")
+                self.cfg.trim[key] = float(value)
 
     @property
     def gait(self) -> dict:
@@ -404,12 +519,12 @@ class Robot:
         log.info("демо остановлено, сигнал снят")
 
     def _demo_step(self, name: str, t: float) -> tuple[float, float]:
-        """Шаг вперёд полной длины в воздухе: корпус на высоте стойки, без наклонов."""
+        """Шаг вперёд полной длины в воздухе: корпус на высоте профиля (без неё — стойки), без наклонов."""
         m, gait, leg = self.m, self.gait, self.legs[name]
-        p = (t * gait["gait_hz"] + TROT_PHASE.get(name, 0.0)) % 1.0
-        dx, dz = step_offset(p, gait["stride_mm"], gait["lift_mm"])
+        dx, dz = leg_step(gait, name, t * gait["gait_hz"] % 1.0, gait["stride_mm"], gait["lift_mm"])
         y = (1 if leg.side == "left" else -1) * self.g["body_width_mm"] / 2
-        x, z, _ = foot_in_leg((leg.x_mm + dx, y, dz), (leg.x_mm, y, 0.0), m["stand_height_mm"], 0.0, 0.0)
+        x, z, _ = foot_in_leg((leg.x_mm + gait.get("foot_x_mm", 0.0) + dx, y, dz), (leg.x_mm, y, 0.0),
+                              gait.get("height_mm", m["stand_height_mm"]), 0.0, 0.0)
         return ik(x, z, self.g["femur_mm"], self.g["tibia_mm"], leg.knee_dir, self.g.get("tibia_bend_deg", 0.0))
 
     def drive(self) -> tuple[tuple[float, float], str]:
@@ -430,6 +545,21 @@ class Robot:
         walking = abs(vx) > 0.05 or abs(turn) > 0.05
         if walking:
             self.phase = (self.phase + gait["gait_hz"] * dt) % 1.0
+        # Профиль может ходить на своей высоте и с лапами, вынесенными вперёд/назад от оси бедра
+        # (height_mm, foot_x_mm): так подошва встаёт на стоппер, а не на край голени.
+        # Переход плавный, шаг растёт вместе с ним — пока корпус не поднялся, лапы почти не шагают.
+        self.walk_blend = clamp(self.walk_blend + (dt if walking else -dt) / WALK_RAMP_S, 0.0, 1.0)
+        w = self.walk_blend
+        # Вынос лап — только при ходьбе вперёд: у рыси с лапами позади оси бедра ход назад
+        # на собаке почти не работает (шагает на месте). Назад и на развороте — лапы под осью бедра.
+        forward = walking and vx > 0.05
+        self.forward_blend = clamp(self.forward_blend + (dt if forward else -dt) / WALK_RAMP_S, 0.0, 1.0)
+        height = self.body.height + w * (gait.get("height_mm", self.body.height) - self.body.height)
+        foot_x = min(w, self.forward_blend) * gait.get("foot_x_mm", 0.0)
+        roll = clamp(roll + w * body_sway(gait, self.phase)[1], -max_roll, max_roll)
+        # огрехи сборки: корпус, стоящий «ровно» по командам, на деле наклонён — поправка сверх пределов
+        pitch += self.cfg.trim["pitch_deg"]
+        roll += self.cfg.trim["roll_deg"]
 
         # Лапы задаются точками на полу (мир), потом переводятся в систему наклонённого корпуса.
         # Ноги двухзвенные, без отведения: боковое смещение лапы при крене не отрабатывается,
@@ -437,14 +567,12 @@ class Robot:
         result = {}
         for leg in self.legs.values():
             side = 1 if leg.side == "left" else -1
-            fx, fz = leg.x_mm, 0.0
-            if walking:
-                stride = gait["stride_mm"] * clamp(vx + side * turn, -1, 1)
-                p = (self.phase + TROT_PHASE.get(leg.name, 0.0)) % 1.0
-                dx, dz = step_offset(p, stride, gait["lift_mm"])
-                fx, fz = fx + dx, fz + dz
+            # После остановки шаг сразу нулевой, а подъём лапы и качание корпуса гаснут вместе с w.
+            stride = gait["stride_mm"] * clamp(vx + side * turn, -1, 1) if walking else 0.0
+            dx, dz = leg_step(gait, leg.name, self.phase, w * stride, w * gait["lift_mm"], w)
+            fx, fz = leg.x_mm + foot_x + dx, dz
             hip = (leg.x_mm, side * half_width, 0.0)
-            x, z, _ = foot_in_leg((fx, side * half_width, fz), hip, self.body.height, pitch, roll)
+            x, z, _ = foot_in_leg((fx, side * half_width, fz), hip, height, pitch, roll)
             result[leg.name] = (x, z)
         return result
 
@@ -563,7 +691,7 @@ class Robot:
             "legs": [asdict(leg) for leg in self.legs.values()],
             "servos": [{"id": s.cfg.id, "leg": s.cfg.leg, "joint": s.cfg.joint,
                         "channel": s.cfg.channel} for s in self.servos.values()],
-            "poses": list(self.poses()),
+            "poses": self.pose_names(),
             "moves": list(self.moves()),
             "gaits": [{"name": name, **gait, **gait_stats(gait, self.m["stand_height_mm"], self.g,
                                                          self.cfg.legs[0].knee_dir, self.speed_limit(gait))}
@@ -600,4 +728,5 @@ class Robot:
             "frame_guard": self.guard is not None,
             "power": {**asdict(self.power), "max_servos": self.power.max_servos(),
                       "installed": self.installed_count()},
+            "trim": dict(self.cfg.trim),
         }

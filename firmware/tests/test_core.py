@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from edog.config import load_config
+from edog.config import _apply_calibration, load_config
 from edog.kinematics import fk, foot_in_leg, ik
 from edog.pca9685 import MockDriver
 from edog.robot import Robot
@@ -61,7 +61,7 @@ def test_slew_limit(robot):
     robot.set_servo("FL_hip", angle=170)
     before = robot.servos["FL_hip"].current
     robot.step(0.02)
-    assert robot.servos["FL_hip"].current - before == pytest.approx(300 * 0.02)
+    assert robot.servos["FL_hip"].current - before == pytest.approx(robot.speed_limit() * 0.02)
 
 
 def test_servo_limits_clamped(robot):
@@ -333,7 +333,7 @@ def test_any_command_stops_demo(robot):
 
 def test_gait_profiles(robot):
     gaits = {g["name"]: g for g in robot.describe()["gaits"]}
-    assert robot.state()["gait"] == robot.cfg.gait == "base"
+    assert robot.state()["gait"] == robot.cfg.gait == "crawl"
     assert gaits["base"]["stride_mm"] == 30.0 and gaits["base"]["lift_mm"] == 15.0   # прежняя ходьба
     assert gaits["max"]["hip_swing"] > gaits["wide"]["hip_swing"] > gaits["base"]["hip_swing"]
     with pytest.raises(ValueError):
@@ -343,6 +343,85 @@ def test_gait_profiles(robot):
     robot.save_calibration()
     data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
     assert data["gait"] == "wide"
+
+
+def test_trim(robot):
+    """Поправка наклона: работает как наклон корпуса, сохраняется и читается из calibration.json."""
+    robot.update_trim(roll_deg=3)
+    trimmed = robot.feet(0.02)
+    robot.update_trim(roll_deg=0)
+    robot.set_body(roll=3)
+    assert robot.feet(0.02) == pytest.approx(trimmed)
+    with pytest.raises(ValueError):
+        robot.update_trim(pitch_deg=20)
+    robot.update_trim(pitch_deg=-1.5, roll_deg=3)
+    robot.save_calibration()
+    data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
+    assert data["trim"] == {"pitch_deg": -1.5, "roll_deg": 3.0}
+    robot.cfg.trim = {"pitch_deg": 0.0, "roll_deg": 0.0}
+    _apply_calibration(robot.cfg)
+    assert robot.cfg.trim == {"pitch_deg": -1.5, "roll_deg": 3.0}
+
+
+def test_foot_offset_only_forward(robot):
+    """Вынос лап профиля — только при ходьбе вперёд; назад лапы под осью бедра."""
+    robot.set_gait("base")
+    for vx, expected in ((1, robot.gait["foot_x_mm"]), (-1, 0.0)):
+        for _ in range(60):
+            robot.set_web_drive(vx, 0)
+            robot.feet(0.02)
+        x0 = robot.forward_blend * robot.gait["foot_x_mm"]
+        assert x0 == pytest.approx(expected)
+
+
+def test_mount_pose(robot):
+    """Стойка «монтаж» — суставы в ref_deg; стик ходьбы возвращает в обычную стойку."""
+    robot.set_enabled(True)
+    robot.set_pose("mount")
+    assert "mount" in robot.describe()["poses"] and robot.state()["pose"] == "mount"
+    for _ in range(200):
+        robot.step(0.02)
+    for s in robot.servos.values():
+        assert s.servo_to_joint(s.current) == pytest.approx(s.cfg.ref_deg)
+    robot.set_web_drive(1, 0)
+    robot.step(0.02)
+    assert robot.mode == "stand" and robot.pose_name == "stand"
+
+
+def test_crawl_keeps_three_feet_down(robot):
+    """Шаг: в воздухе не больше одной лапы, каждая за цикл поднимается; корпус качается."""
+    from edog.robot import body_sway, leg_step
+    g = robot.cfg.gaits["crawl"]
+    lifted, sway = set(), set()
+    for i in range(400):
+        up = [leg for leg in robot.legs if leg_step(g, leg, i / 400, g["stride_mm"], g["lift_mm"])[1] > 0]
+        assert len(up) <= 1
+        lifted.update(up)
+        sway.add(tuple(round(v) for v in body_sway(g, i / 400)))
+    assert lifted == set(robot.legs)
+    a, r = round(g["sway_mm"]), round(g["sway_roll_deg"])
+    assert {(a, r), (-a, r), (a, -r), (-a, -r)} <= sway
+
+
+def test_gait_height_and_foot_offset(robot):
+    """Профиль stopper: при ходьбе корпус плавно поднимается к height_mm, лапы уходят на foot_x_mm,
+    после остановки — обратно в стойку."""
+    robot.set_gait("stopper")
+    g, stand = robot.gait, robot.body.height
+    robot.set_web_drive(1, 0)
+    feet = robot.feet(0.02)
+    assert robot.walk_blend < 0.1
+    for _ in range(40):
+        feet = robot.feet(0.02)
+    assert robot.walk_blend == 1.0
+    zs = [z for _, z in feet.values()]
+    assert max(zs) == pytest.approx(g["height_mm"])   # опорные лапы на полу
+    robot.set_web_drive(0, 0)
+    robot.web_drive_t -= 10
+    for _ in range(40):
+        feet = robot.feet(0.02)
+    assert robot.walk_blend == 0.0
+    assert all(x == pytest.approx(0) and z == pytest.approx(stand) for x, z in feet.values())
 
 
 @pytest.mark.parametrize("gait", list(load_config(CONFIG).gaits))

@@ -45,6 +45,8 @@ class Config:
     power: dict = field(default_factory=dict)   # [power] из config.toml, поверх — "power" из calibration.json
     gaits: dict[str, dict] = field(default_factory=dict)   # профили ходьбы [gaits.*]
     gait: str = ""                              # выбранный профиль: motion.gait, поверх — "gait" из calibration.json
+    # поправка наклона корпуса на огрехи сборки, °: прибавляется к тангажу и крену всегда; из calibration.json
+    trim: dict = field(default_factory=lambda: {"pitch_deg": 0.0, "roll_deg": 0.0})
     legs: list[LegCfg] = field(default_factory=list)
     servos: list[ServoCfg] = field(default_factory=list)
 
@@ -83,6 +85,15 @@ def load_config(path: str | Path) -> Config:
         if missing:
             raise ValueError(f"gaits.{name}: нет {', '.join(sorted(missing))}")
         g.setdefault("title", name)
+        if g.get("pattern", "trot") not in ("trot", "crawl"):
+            raise ValueError(f"gaits.{name}.pattern: trot или crawl")
+        if g.get("pattern") == "crawl":
+            swing = g.get("swing", 0.1)
+            if not (0 < swing and 4 * swing + 2 * g.get("gap", swing) < 1):
+                raise ValueError(f"gaits.{name}: у шага 4·swing + 2·gap < 1 — иначе не остаётся паузы на четырёх лапах")
+        m = raw["motion"]
+        if not m["min_height_mm"] <= g.get("height_mm", m["min_height_mm"]) <= m["max_height_mm"]:
+            raise ValueError(f"gaits.{name}.height_mm: вне motion.min_height_mm … max_height_mm")
 
     cfg = Config(
         path=path,
@@ -104,6 +115,7 @@ def load_config(path: str | Path) -> Config:
 def _apply_calibration(cfg: Config) -> None:
     data = _read_calibration(cfg)
     cfg.power.update(data.get("power", {}))
+    cfg.trim.update({k: float(v) for k, v in data.get("trim", {}).items() if k in cfg.trim})
     if data.get("gait") in cfg.gaits:
         cfg.gait = data["gait"]
     if cfg.gait not in cfg.gaits:
@@ -120,11 +132,13 @@ def _read_calibration(cfg: Config) -> dict:
     return json.loads(cfg.calibration_path.read_text(encoding="utf-8"))
 
 
-def save_calibration(cfg: Config, servos, power: dict, gait: str) -> Path:
-    """Всё, что меняется из портала, одним файлом: калибровка серво, лимит тока, профиль ходьбы."""
+def save_calibration(cfg: Config, servos, power: dict, gait: str, trim: dict) -> Path:
+    """Всё, что меняется из портала, одним файлом: калибровка серво, лимит тока, профиль ходьбы,
+    поправка наклона корпуса."""
     data = {s.cfg.id: {k: getattr(s.cfg, k) for k in CALIB_FIELDS} for s in servos}
     data["power"] = power
     data["gait"] = gait
+    data["trim"] = trim
     tmp = cfg.calibration_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(cfg.calibration_path)

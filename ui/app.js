@@ -3,11 +3,11 @@ import { Dog3D } from './dog3d.js';
 const $ = id => document.getElementById(id);
 const LEG_NAMES = { FL: 'перед. левая', FR: 'перед. правая', RL: 'задн. левая', RR: 'задн. правая' };
 const JOINT_NAMES = { hip: 'бедро', knee: 'колено' };
-const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко' };
+const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко', mount: 'Монтаж' };
 const MOVE_NAMES = { jump: 'Прыжок' };
 const DPAD_LABELS = { up: 'крестовина ↑', down: 'крестовина ↓', left: 'крестовина ←', right: 'крестовина →' };
 const ACTION_NAMES = {
-  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', jump: 'прыжок',
+  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', mount: 'монтаж', jump: 'прыжок',
   torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп',
 };
 const AXIS_NAMES = { drive: 'вперёд/назад', turn: 'поворот', pitch: 'тангаж', roll: 'крен', height_down: 'опустить, пока нажат', height_up: 'поднять, пока нажат' };
@@ -192,6 +192,7 @@ function render(s) {
   renderGait(s.gait);
 
   renderPower(s.power);
+  renderTrim(s.trim);
   $('cal-dirty').textContent = calibDirty ? '⚠ есть несохранённые изменения' : 'всё сохранено';
   const full = powerFull(s.power);
   for (const sv of s.servos) {
@@ -235,6 +236,7 @@ function renderGait(name) {
   const g = config.gaits.find(x => x.name === name);
   if (!g) return;
   $('gait-info').textContent = `${g.gait_hz} шаг/с · длина ${g.stride_mm} мм · подъём ${g.lift_mm} мм · `
+    + (g.height_mm ? `высота ${g.height_mm} мм, лапа ${g.foot_x_mm > 0 ? '+' : ''}${g.foot_x_mm ?? 0} мм от бедра · ` : '')
     + `бедро ±${(g.hip_swing / 2).toFixed(0)}°, колено ±${(g.knee_swing / 2).toFixed(0)}° · `
     + `пик ${Math.max(g.hip_peak_dps, g.knee_peak_dps)} °/с из ${g.speed_dps}`
     + (g.limited ? ' · ⚠ упор в скорость серво: реальный шаг меньше' : '');
@@ -255,6 +257,16 @@ function renderPower(p) {
     ? `Без ограничения (лимит 0). Подключено ${p.installed} серво, в пике до ${(p.installed * p.servo_a).toFixed(1)} А.`
     : `Подключено ${p.installed} из ${p.max_servos} возможных · в пике до ${(p.installed * p.servo_a).toFixed(1)} А из ${p.limit_a} А`
       + (powerFull(p) ? ' · ⚠ лимит исчерпан' : ''));
+}
+
+let trimDirty = false;
+
+function renderTrim(t) {
+  if (!trimDirty) {
+    $('trim-pitch').value = t.pitch_deg;
+    $('trim-roll').value = t.roll_deg;
+  }
+  $('trim-info').textContent = trimDirty ? '⚠ не применено' : 'Действует всегда, поверх наклона из стоек и стика';
 }
 
 function renderGamepad(gp) {
@@ -322,7 +334,7 @@ function renderDetail() {
 function bindControls() {
   $('torque').onchange = e => api('POST', '/api/enable', { enabled: e.target.checked });
   $('estop').onclick = () => api('POST', '/api/estop');
-  $('gait').innerHTML = config.gaits.map(g => `<option value="${g.name}">${g.title} · ~${(g.stride_mm * g.gait_hz / 10).toFixed(1)} см/с</option>`).join('');
+  $('gait').innerHTML = config.gaits.map(g => `<option value="${g.name}">${g.title} · ~${(g.speed_mm_s / 10).toFixed(1)} см/с</option>`).join('');
   $('gait').onchange = e => api('POST', '/api/gait', { name: e.target.value })
     .then(() => { calibDirty = true; e.target.blur(); toast('Профиль шага выбран (не забудьте сохранить)'); });
   $('demo').onclick = () => api('POST', '/api/demo', { action: state?.demo ? 'stop' : 'start' });
@@ -396,6 +408,15 @@ function bindControls() {
   for (const id of ['pw-limit', 'pw-servo']) {
     $(id).oninput = () => { powerDirty = true; };
     $(id).onkeydown = e => { if (e.key === 'Enter') applyPower(); };
+  }
+
+  const applyTrim = () => api('PATCH', '/api/trim', {
+    pitch_deg: Number($('trim-pitch').value), roll_deg: Number($('trim-roll').value),
+  }).then(s => { trimDirty = false; calibDirty = true; toast(`Поправка: тангаж ${s.trim.pitch_deg}°, крен ${s.trim.roll_deg}° (не забудьте сохранить)`); });
+  $('trim-apply').onclick = applyTrim;
+  for (const id of ['trim-pitch', 'trim-roll']) {
+    $(id).oninput = () => { trimDirty = true; };
+    $(id).onkeydown = e => { if (e.key === 'Enter') applyTrim(); };
   }
 
   $('bt-scan').onclick = scanBluetooth;
