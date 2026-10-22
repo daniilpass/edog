@@ -27,6 +27,7 @@ class Gamepad:
             self.axes[ecodes.ecodes[name]] = role
         for name, action in cfg.get("buttons", {}).items():
             self.buttons[ecodes.ecodes[name]] = action
+        self.dpad = cfg.get("dpad", {})   # up/down/left/right → действие
         self.values = {"drive": 0.0, "turn": 0.0, "pitch": 0.0, "roll": 0.0, "height_down": 0.0, "height_up": 0.0}
 
     def _find(self):
@@ -73,6 +74,11 @@ class Gamepad:
         r = self.robot
         if action in r.poses():
             r.set_pose(action)
+        elif action in r.moves():
+            try:
+                r.start_move(action)
+            except ValueError as e:   # серво выключены
+                log.warning("%s", e)
         elif action == "torque_toggle":
             try:
                 r.set_enabled(not r.enabled)
@@ -84,7 +90,14 @@ class Gamepad:
             log.warning("неизвестное действие геймпада: %s", action)
 
     def _handle(self, dev, ev) -> None:
-        if ev.type == ecodes.EV_ABS and ev.code in self.axes:
+        if ev.type == ecodes.EV_ABS and ev.code in (ecodes.ABS_HAT0X, ecodes.ABS_HAT0Y):
+            if ev.value:   # крестовина: −1 вверх/влево, 1 вниз/вправо
+                y = ev.code == ecodes.ABS_HAT0Y
+                side = ("up" if ev.value < 0 else "down") if y else ("left" if ev.value < 0 else "right")
+                self.robot.gamepad["last_button"] = f"DPAD_{side.upper()}"
+                if side in self.dpad:
+                    self._action(self.dpad[side])
+        elif ev.type == ecodes.EV_ABS and ev.code in self.axes:
             role = self.axes[ev.code]
             norm = self._trigger if role in TRIGGERS else self._norm
             self.values[role] = norm(dev, ev.code, ev.value)

@@ -422,3 +422,27 @@ def test_trigger_changes_height_while_held(robot):
     low = robot.body.height
     robot.step(0.02)
     assert robot.body.height == low
+
+
+def test_jump_ends_in_stand(robot):
+    with pytest.raises(ValueError):
+        robot.start_move("jump")   # серво выключены
+    robot.set_enabled(True)
+    robot.start_move("jump")
+    assert robot.move_name == "jump" and robot.body.height < robot.m["stand_height_mm"]
+    heights = []
+    for _ in range(100):
+        robot.step(0.02)
+        heights.append(robot.body.height)
+    assert max(heights) > robot.m["max_height_mm"]   # толчок до прямой ноги
+    assert robot.move_name is None and robot.pose_name == "stand"
+
+
+def test_pose_interrupts_move(robot):
+    robot.set_enabled(True)
+    robot.start_move("jump")
+    robot.set_pose("sit")
+    assert robot.move_name is None and robot.pose_name == "sit"
+
+
+

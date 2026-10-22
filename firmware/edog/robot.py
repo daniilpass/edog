@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict, dataclass, replace
-from math import pi, sin
+from math import inf, pi, sin
 
 from .collision import FrameGuard
 from .config import JOINTS, Config, save_calibration
@@ -17,6 +17,9 @@ log = logging.getLogger(__name__)
 MODES = ("stand", "manual")
 TEST_ACTIONS = ("center", "ref", "sweep", "stop")
 SWEEP_SPEED_DPS = 60
+# Резкие шаги движений без ограничения скорости: цель сразу в конце хода, серво жмёт
+# с полным моментом с первого мгновения (при плавной цели ошибка мала — и момент тоже).
+MOVE_SPEED_DPS = inf
 POWER_DOWN_TIMEOUT_S = 5.0   # не дошла до монтажного положения за это время (нога у рамы) — сигнал снимается всё равно
 # Рысь: диагональные пары ног в противофазе.
 TROT_PHASE = {"FL": 0.0, "RR": 0.0, "FR": 0.5, "RL": 0.5}
@@ -126,6 +129,10 @@ class Robot:
         self.power = PowerCfg.from_dict(cfg.power)
         self.demo: Demo | None = None
         self.signal: set[str] = set()   # серво, на каналы которых сейчас идёт импульс
+        self.move: list[tuple[Body, float, float | None]] = []   # оставшиеся шаги движения
+        self.move_name: str | None = None
+        self.move_t = 0.0                  # сколько ещё держать текущий шаг, с
+        self.move_speed: float | None = None
         self.powering_down: float | None = None   # с какого времени встаёт в монтажное положение перед снятием сигнала
 
         # Узел колена не поднимается выше плоскости рамы (см. collision.py).
@@ -151,6 +158,37 @@ class Robot:
             "lie": Body(m["min_height_mm"]),
             "high": Body(m["max_height_mm"] - 4),
         }
+
+    def moves(self) -> dict[str, list[tuple[Body, float, float | None]]]:
+        """Движения: шаги (корпус, сколько держать, с; скорость серво, °/с, или None — обычная).
+        После движения собака встаёт в стойку."""
+        m = self.m
+        return {
+            "jump": [   # прыжок вверх: неглубоко присесть, резкий толчок, потом стойка (ноги не поджимаются)
+                (Body(m["stand_height_mm"] - 10), 0.25, None),
+                # толчок до полностью прямой ноги (IK прижмёт к досягаемости), дальше max_height_mm
+                (Body(self.g["femur_mm"] + self.g["tibia_mm"]), 0.12, MOVE_SPEED_DPS),
+            ],
+        }
+
+    def start_move(self, name: str) -> None:
+        steps = self.moves()[name]
+        if not self.enabled or self.powering_down is not None:
+            raise ValueError("движение: сначала включите серво")
+        self.stop_demo()
+        self._stop_tests()
+        self.mode = "stand"
+        self.pose_name = None
+        self.move, self.move_name = list(steps), name
+        self._next_move_step()
+        log.info("движение: %s", name)
+
+    def _next_move_step(self) -> None:
+        if not self.move:
+            self.set_pose("stand")
+            return
+        body, self.move_t, self.move_speed = self.move.pop(0)
+        self.body = replace(body)
 
     def set_enabled(self, enabled: bool) -> None:
         """Выключение из стойки плавное: суставы сначала встают в монтажное положение (ref_deg),
@@ -354,6 +392,8 @@ class Robot:
         log.info("демо: %s, шаг %s, по %d циклов на ногу, кругов %d", program, self.gait_name, cycles, laps)
 
     def stop_demo(self) -> None:
+        # Любая команда прерывает и движение: все они проходят через stop_demo().
+        self.move, self.move_name, self.move_speed = [], None, None
         if not self.demo:
             return
         self.demo = None
@@ -416,14 +456,18 @@ class Robot:
                     s.set_target(s.joint_to_servo(angle))
             return
         (vx, turn), _ = self.drive()
-        if self.powering_down is not None:
+        if self.move_name:
+            self.move_t -= dt
+            if self.move_t <= 0:
+                self._next_move_step()
+        if self.powering_down is not None or self.move_name:
             vx = turn = 0.0   # встаёт в монтажное положение перед выключением: без ходьбы
         if abs(vx) > 0.05 or abs(turn) > 0.05:
             if self.mode == "manual" or self.pose_name != "stand":
                 self.set_pose("stand")   # ходит только из стойки: стик или стрелки переводят в неё
         elif self.mode == "manual":
             return
-        if self.height_rate and self.powering_down is None:
+        if self.height_rate and self.powering_down is None and not self.move_name:
             # Поза при этом не меняется: из стойки с другой высотой ходить можно.
             m = self.m
             h = self.body.height + self.height_rate * m.get("height_speed_mm_s", 30.0) * dt
@@ -455,7 +499,7 @@ class Robot:
     def step(self, dt: float) -> None:
         self._update_targets(dt)
         before = {name: self._leg_joints(name, "current") for name in self.legs}
-        max_speed = self.speed_limit()
+        max_speed = self.move_speed if self.move_name and self.move_speed else self.speed_limit()
         for s in self.servos.values():
             if not self.enabled:
                 s.current = s.target
@@ -520,6 +564,7 @@ class Robot:
             "servos": [{"id": s.cfg.id, "leg": s.cfg.leg, "joint": s.cfg.joint,
                         "channel": s.cfg.channel} for s in self.servos.values()],
             "poses": list(self.poses()),
+            "moves": list(self.moves()),
             "gaits": [{"name": name, **gait, **gait_stats(gait, self.m["stand_height_mm"], self.g,
                                                          self.cfg.legs[0].knee_dir, self.speed_limit(gait))}
                       for name, gait in self.cfg.gaits.items()],
@@ -527,7 +572,8 @@ class Robot:
                        "pitch": self.m["max_tilt_deg"],
                        "roll": self.m.get("max_roll_deg", self.m["max_tilt_deg"])},
             "gamepad": {"axes": self.cfg.gamepad.get("axes", {}),
-                        "buttons": self.cfg.gamepad.get("buttons", {})},
+                        "buttons": self.cfg.gamepad.get("buttons", {}),
+                        "dpad": self.cfg.gamepad.get("dpad", {})},
             # плоскость рамы, мм от оси бедра (вверх +): plane — низ перекладины, limit — с запасом
             "frame_guard": None if not self.guard else {
                 "plane_mm": round(self.guard.frame_bottom, 2), "limit_mm": round(self.guard.limit, 2)},
@@ -541,6 +587,7 @@ class Robot:
             "powering_down": self.powering_down is not None,
             "mode": self.mode,
             "pose": self.pose_name,
+            "move": self.move_name,
             "body": asdict(self.body),
             "tilt": self.tilt,
             "drive": {"vx": vx, "turn": turn, "source": source},

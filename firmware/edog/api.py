@@ -121,6 +121,10 @@ def create_app(robot) -> tuple[FastAPI, callable]:
     def pose(name: str):
         return servo_call(robot.set_pose, name)
 
+    @app.post("/api/move/{name}")
+    def move(name: str):
+        return servo_call(robot.start_move, name)
+
     @app.post("/api/demo")
     def demo(req: DemoReq):
         """Демо: ноги по кругу шагают в воздухе; сколько ног сразу — по лимиту тока."""

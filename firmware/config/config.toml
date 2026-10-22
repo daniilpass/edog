@@ -147,3 +147,6 @@ BTN_X = "lie"               # X
 BTN_Y = "high"              # Y
 BTN_START = "torque_toggle" # Start / Options
 BTN_SELECT = "estop"        # Back / Share
+
+[gamepad.dpad]
+up = "jump"                 # крестовина вверх: прыжок

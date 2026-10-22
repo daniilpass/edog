@@ -4,8 +4,10 @@ const $ = id => document.getElementById(id);
 const LEG_NAMES = { FL: 'перед. левая', FR: 'перед. правая', RL: 'задн. левая', RR: 'задн. правая' };
 const JOINT_NAMES = { hip: 'бедро', knee: 'колено' };
 const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко' };
+const MOVE_NAMES = { jump: 'Прыжок' };
+const DPAD_LABELS = { up: 'крестовина ↑', down: 'крестовина ↓', left: 'крестовина ←', right: 'крестовина →' };
 const ACTION_NAMES = {
-  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко',
+  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', jump: 'прыжок',
   torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп',
 };
 const AXIS_NAMES = { drive: 'вперёд/назад', turn: 'поворот', pitch: 'тангаж', roll: 'крен', height_down: 'опустить, пока нажат', height_up: 'поднять, пока нажат' };
@@ -121,6 +123,13 @@ function buildStatic() {
     b.onclick = () => api('POST', `/api/pose/${name}`);
     $('poses').append(b);
   }
+  for (const name of config.moves ?? []) {
+    const b = document.createElement('button');
+    b.textContent = MOVE_NAMES[name] ?? name;
+    b.dataset.move = name;
+    b.onclick = () => api('POST', `/api/move/${name}`);
+    $('moves').append(b);
+  }
   const [hmin, hmax] = config.limits.height;
   Object.assign($('height'), { min: hmin, max: hmax });
   Object.assign($('pitch'), { min: -config.limits.pitch, max: config.limits.pitch });
@@ -145,6 +154,9 @@ function buildStatic() {
   for (const [code, action] of Object.entries(config.gamepad.buttons)) {
     map.insertAdjacentHTML('beforeend', `<tr><td>${BUTTON_LABELS[code] ?? code}</td><td>${ACTION_NAMES[action] ?? action}</td></tr>`);
   }
+  for (const [side, action] of Object.entries(config.gamepad.dpad ?? {})) {
+    map.insertAdjacentHTML('beforeend', `<tr><td>${DPAD_LABELS[side] ?? side}</td><td>${ACTION_NAMES[action] ?? action}</td></tr>`);
+  }
 }
 
 function render(s) {
@@ -155,6 +167,7 @@ function render(s) {
   $('torque').checked = s.enabled;
   for (const b of $('modes').children) b.classList.toggle('active', b.dataset.mode === s.mode);
   for (const b of $('poses').children) b.classList.toggle('active', config.poses[[...$('poses').children].indexOf(b)] === s.pose);
+  for (const b of $('moves').children) b.classList.toggle('active', b.dataset.move === s.move);
 
   // Сервер: собака (настоящий Linux с evdev/Bluetooth) или ПК с заглушкой — чтобы не путать вкладки.
   const onDog = !s.gamepad.unavailable;
