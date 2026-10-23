@@ -333,16 +333,16 @@ def test_any_command_stops_demo(robot):
 
 def test_gait_profiles(robot):
     gaits = {g["name"]: g for g in robot.describe()["gaits"]}
-    assert robot.state()["gait"] == robot.cfg.gait == "crawl"
+    assert robot.state()["gait"] == robot.cfg.gait == "base"
     assert gaits["base"]["stride_mm"] == 30.0 and gaits["base"]["lift_mm"] == 15.0   # прежняя ходьба
-    assert gaits["max"]["hip_swing"] > gaits["wide"]["hip_swing"] > gaits["base"]["hip_swing"]
+    assert gaits["base_slow"]["knee_peak_dps"] < gaits["base"]["knee_peak_dps"]
     with pytest.raises(ValueError):
         robot.set_gait("нет такого")
-    robot.set_gait("wide")
-    assert robot.speed_limit() == robot.cfg.gaits["wide"]["max_speed_dps"]
+    robot.set_gait("stopper")
+    assert robot.speed_limit() == robot.cfg.gaits["stopper"]["max_speed_dps"]
     robot.save_calibration()
     data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
-    assert data["gait"] == "wide"
+    assert data["gait"] == "stopper"
 
 
 def test_trim(robot):
@@ -391,7 +391,8 @@ def test_mount_pose(robot):
 def test_crawl_keeps_three_feet_down(robot):
     """Шаг: в воздухе не больше одной лапы, каждая за цикл поднимается; корпус качается."""
     from edog.robot import body_sway, leg_step
-    g = robot.cfg.gaits["crawl"]
+    g = {"pattern": "crawl", "gait_hz": 0.5, "stride_mm": 28.0, "lift_mm": 8.0, "swing": 0.1, "gap": 0.06,
+         "sway_mm": 4.0, "sway_roll_deg": 8.0}   # профиля шага в конфиге нет, код остался
     lifted, sway = set(), set()
     for i in range(400):
         up = [leg for leg in robot.legs if leg_step(g, leg, i / 400, g["stride_mm"], g["lift_mm"])[1] > 0]
