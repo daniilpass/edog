@@ -21,7 +21,7 @@ SWEEP_SPEED_DPS = 60
 # с полным моментом с первого мгновения (при плавной цели ошибка мала — и момент тоже).
 MOVE_SPEED_DPS = inf
 TRIM_MAX_DEG = 10.0          # поправка наклона корпуса на огрехи сборки, °
-WALK_RAMP_S = 0.5            # переход стойка ↔ высота и вынос лап профиля ходьбы, с
+WALK_RAMP_S = 0.5            # разгон шага из стойки и уход лап под ось бедра при ходьбе назад, с
 POWER_DOWN_TIMEOUT_S = 5.0   # не дошла до монтажного положения за это время (нога у рамы) — сигнал снимается всё равно
 # Походки (pattern в профиле): сдвиг фазы каждой ноги и доля цикла в воздухе (swing, в профиле можно своё).
 PATTERNS = {
@@ -194,6 +194,7 @@ class Body:
     height: float
     pitch: float = 0.0  # °, + — нос вверх
     roll: float = 0.0   # °, + — правый борт ниже
+    foot_x: float = 0.0  # мм, лапы впереди (+) или позади (−) оси бедра
 
 
 class Robot:
@@ -209,7 +210,6 @@ class Robot:
         self.enabled = False
         self.mode = "stand"
         self.pose_name = "stand"
-        self.body = Body(height=self.m["stand_height_mm"])
         self.tilt = (0.0, 0.0)          # смещение pitch/roll с геймпада, доля от max_tilt
         self.pad_drive = (0.0, 0.0)     # vx, turn с геймпада
         self.height_rate = 0.0          # курки: −1 вниз … 1 вверх, доля от height_speed_mm_s
@@ -217,8 +217,10 @@ class Robot:
         self.web_drive_t = 0.0
         self.phase = 0.0
         self.walk_blend = 0.0           # 0 — стойка, 1 — высота и вынос лап профиля ходьбы
-        self.forward_blend = 0.0        # 0 — лапы под осью бедра, 1 — вынос лап профиля (только вперёд)
+        self.walking = False            # идёт шаг (стик толкнут и собака успела встать в стойку)
+        self.forward_blend = 1.0        # 0 — лапы под осью бедра, 1 — вынос лап профиля (в стойке и вперёд)
         self.gait_name = cfg.gait
+        self.body = self.poses()["stand"]
         self.gamepad = {"connected": False, "name": None}
         self.power = PowerCfg.from_dict(cfg.power)
         self.demo: Demo | None = None
@@ -247,7 +249,8 @@ class Robot:
     def poses(self) -> dict[str, Body]:
         m = self.m
         return {
-            "stand": Body(m["stand_height_mm"]),
+            # у каждого профиля шага своя стойка: на его высоте и с его выносом лап
+            "stand": Body(self.gait.get("height_mm", m["stand_height_mm"]), foot_x=self.gait.get("foot_x_mm", 0.0)),
             "sit": Body(m["stand_height_mm"] - 10, pitch=20),
             "lie": Body(m["min_height_mm"]),
             "high": Body(m["max_height_mm"] - 4),
@@ -477,6 +480,8 @@ class Robot:
             raise ValueError(f"профили ходьбы: {tuple(self.cfg.gaits)}")
         self.gait_name = name
         log.info("профиль ходьбы: %s", name)
+        if self.mode == "stand" and self.pose_name == "stand" and not self.move_name and not self.demo:
+            self.body = self.poses()["stand"]   # стоит — встаёт в стойку нового профиля
 
     def installed_count(self) -> int:
         return sum(s.cfg.installed for s in self.servos.values())
@@ -545,20 +550,29 @@ class Robot:
         roll = clamp(self.body.roll + self.tilt[1] * max_roll, -max_roll, max_roll)
         half_width = self.g["body_width_mm"] / 2
         (vx, turn), _ = self.drive()
-        walking = abs(vx) > 0.05 or abs(turn) > 0.05
+        # Ходьба всегда начинается с начала: если стик снова толкнули, пока собака ещё не встала,
+        # она сначала доходит до стойки профиля (лапы опускаются, серво доезжают), потом шаг с фазы 0 —
+        # первыми идут FL и RR.
+        if not (abs(vx) > 0.05 or abs(turn) > 0.05):
+            self.walking = False
+        elif not self.walking and self.walk_blend == 0.0 and self._settled():
+            self.walking, self.phase = True, 0.0
+        walking = self.walking
         if walking:
             self.phase = (self.phase + gait["gait_hz"] * dt) % 1.0
         # Профиль может ходить на своей высоте и с лапами, вынесенными вперёд/назад от оси бедра
         # (height_mm, foot_x_mm): так подошва встаёт на стоппер, а не на край голени.
-        # Переход плавный, шаг растёт вместе с ним — пока корпус не поднялся, лапы почти не шагают.
-        self.walk_blend = clamp(self.walk_blend + (dt if walking else -dt) / WALK_RAMP_S, 0.0, 1.0)
+        # Старт плавный, шаг растёт вместе с ним — пока корпус не поднялся, лапы почти не шагают.
+        # Остановка — сразу в стойку профиля (дальше только ограничение скорости серво).
+        self.walk_blend = clamp(self.walk_blend + dt / WALK_RAMP_S, 0.0, 1.0) if walking else 0.0
         w = self.walk_blend
-        # Вынос лап — только при ходьбе вперёд: у рыси с лапами позади оси бедра ход назад
+        # Вынос лап — в стойке и при ходьбе вперёд: у рыси с лапами позади оси бедра ход назад
         # на собаке почти не работает (шагает на месте). Назад и на развороте — лапы под осью бедра.
-        forward = walking and vx > 0.05
-        self.forward_blend = clamp(self.forward_blend + (dt if forward else -dt) / WALK_RAMP_S, 0.0, 1.0)
+        forward = not walking or vx > 0.05
+        self.forward_blend = clamp(self.forward_blend + (dt if forward else -dt) / WALK_RAMP_S, 0.0, 1.0) if walking else 1.0
         height = self.body.height + w * (gait.get("height_mm", self.body.height) - self.body.height)
-        foot_x = min(w, self.forward_blend) * gait.get("foot_x_mm", 0.0)
+        walk_x = self.forward_blend * gait.get("foot_x_mm", 0.0)
+        foot_x = self.body.foot_x + w * (walk_x - self.body.foot_x)
         roll = clamp(roll + w * body_sway(gait, self.phase)[1], -max_roll, max_roll)
         # огрехи сборки: корпус, стоящий «ровно» по командам, на деле наклонён — поправка сверх пределов
         pitch += self.cfg.trim["pitch_deg"]
@@ -570,7 +584,6 @@ class Robot:
         result = {}
         for leg in self.legs.values():
             side = 1 if leg.side == "left" else -1
-            # После остановки шаг сразу нулевой, а подъём лапы и качание корпуса гаснут вместе с w.
             stride = gait["stride_mm"] * clamp(vx + side * turn, -1, 1) if walking else 0.0
             dx, dz = leg_step(gait, leg.name, self.phase, w * stride, w * gait["lift_mm"], w)
             fx, fz = leg.x_mm + foot_x + dx, dz
@@ -578,6 +591,9 @@ class Robot:
             x, z, _ = foot_in_leg((fx, side * half_width, fz), hip, height, pitch, roll)
             result[leg.name] = (x, z)
         return result
+
+    def _settled(self) -> bool:
+        return all(abs(s.target - s.current) < 1.0 for s in self.servos.values())
 
     def _update_targets(self, dt: float) -> None:
         if self.demo:
@@ -631,13 +647,23 @@ class Robot:
         self._update_targets(dt)
         before = {name: self._leg_joints(name, "current") for name in self.legs}
         max_speed = self.move_speed if self.move_name and self.move_speed else self.speed_limit()
+        # Суставы ноги доходят до цели одновременно: скорость каждого — по его доле хода.
+        # Иначе бедро успевает раньше колена, лапа идёт в обход, и колено задевает раму (стойка → сидеть).
+        lead = {name: max(abs(self.servos[f"{name}_{j}"].target - self.servos[f"{name}_{j}"].current)
+                          for j in JOINTS) for name in self.legs}
         for s in self.servos.values():
             if not self.enabled:
                 s.current = s.target
                 s.queue.clear()
                 continue
-            speed = SWEEP_SPEED_DPS if s.queue else max_speed
-            s.current += clamp(s.target - s.current, -speed * dt, speed * dt)
+            delta = s.target - s.current
+            if s.queue:
+                speed = SWEEP_SPEED_DPS
+            elif delta:
+                speed = max_speed * abs(delta) / lead[s.cfg.leg]
+            else:
+                continue
+            s.current += clamp(delta, -speed * dt, speed * dt)
             if s.queue and abs(s.target - s.current) < 1e-6:
                 s.set_target(s.queue.pop(0))
         self._guard_legs(before)

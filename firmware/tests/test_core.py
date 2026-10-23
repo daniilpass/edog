@@ -405,24 +405,39 @@ def test_crawl_keeps_three_feet_down(robot):
 
 
 def test_gait_height_and_foot_offset(robot):
-    """Профиль stopper: при ходьбе корпус плавно поднимается к height_mm, лапы уходят на foot_x_mm,
-    после остановки — обратно в стойку."""
+    """У каждого профиля своя стойка: выбор профиля ставит корпус на его height_mm, лапы — на foot_x_mm;
+    при ходьбе назад лапы плавно уходят под ось бедра, после остановки — обратно."""
     robot.set_gait("stopper")
-    g, stand = robot.gait, robot.body.height
-    robot.set_web_drive(1, 0)
+    g = robot.gait
+    assert (robot.body.height, robot.body.foot_x) == (g["height_mm"], g["foot_x_mm"])
     feet = robot.feet(0.02)
-    assert robot.walk_blend < 0.1
+    assert all(x == pytest.approx(g["foot_x_mm"]) and z == pytest.approx(g["height_mm"]) for x, z in feet.values())
+    robot.set_web_drive(-1, 0)
     for _ in range(40):
         feet = robot.feet(0.02)
-    assert robot.walk_blend == 1.0
-    zs = [z for _, z in feet.values()]
-    assert max(zs) == pytest.approx(g["height_mm"])   # опорные лапы на полу
+    assert robot.walk_blend == 1.0 and robot.forward_blend == 0.0
+    assert max(z for _, z in feet.values()) == pytest.approx(g["height_mm"])   # опорные лапы на полу
     robot.set_web_drive(0, 0)
     robot.web_drive_t -= 10
     for _ in range(40):
         feet = robot.feet(0.02)
-    assert robot.walk_blend == 0.0
-    assert all(x == pytest.approx(0) and z == pytest.approx(stand) for x, z in feet.values())
+    assert all(x == pytest.approx(g["foot_x_mm"]) and z == pytest.approx(g["height_mm"]) for x, z in feet.values())
+    robot.set_gait("base")
+    assert robot.body.height == robot.m["stand_height_mm"]   # у base нет height_mm — обычная стойка
+
+
+def test_pose_transitions_clear_frame(guarded):
+    """Переходы между позами в стойке любого профиля не упирают колено в раму."""
+    r = guarded
+    r.set_enabled(True)
+    for gait in r.cfg.gaits:
+        r.set_gait(gait)
+        for a, b in (("stand", "sit"), ("high", "sit"), ("stand", "lie"), ("sit", "stand")):
+            for name in (a, b):
+                r.set_pose(name)
+                for _ in range(100):
+                    r.step(0.02)
+                assert not any(r.blocked.values()), (gait, a, b)
 
 
 @pytest.mark.parametrize("gait", list(load_config(CONFIG).gaits))
@@ -538,4 +553,42 @@ def test_pose_interrupts_move(robot):
     assert robot.move_name is None and robot.pose_name == "sit"
 
 
+def test_walk_starts_from_cycle_start(robot):
+    """После полной остановки ходьба начинается с начала цикла, а не с фазы, где встала."""
+    starts = []
+    for _ in range(2):
+        robot.set_web_drive(1, 0)
+        robot.feet(0.02)
+        starts.append(robot.phase)
+        for _ in range(37):
+            robot.feet(0.02)
+        robot.set_web_drive(0, 0)
+        robot.web_drive_t -= 10
+        for _ in range(40):
+            robot.feet(0.02)
+        assert robot.walk_blend == 0.0 and robot.phase != pytest.approx(starts[0])
+    assert starts[0] == pytest.approx(starts[1]) == pytest.approx(robot.gait["gait_hz"] * 0.02)
 
+
+def test_walk_restart_waits_for_stand(robot):
+    """Стик снова толкнули, пока собака ещё не встала: сначала стойка профиля, потом шаг с начала цикла."""
+    robot.set_enabled(True)
+    for _ in range(100):
+        robot.step(0.02)
+    robot.set_web_drive(1, 0)
+    for _ in range(30):
+        robot.web_drive_t = time.monotonic()
+        robot.step(0.02)
+    robot.web_drive_t -= 10            # отпустили: сразу в стойку
+    robot.step(0.02)
+    assert robot.walk_blend == 0.0 and not robot._settled()
+    stopped_at = robot.phase
+    robot.set_web_drive(1, 0)          # и сразу снова вперёд
+    robot.step(0.02)
+    assert not robot.walking and robot.phase == stopped_at
+    for _ in range(100):
+        robot.web_drive_t = time.monotonic()
+        robot.step(0.02)
+        if robot.walking:
+            break
+    assert robot.walking and robot.phase == pytest.approx(robot.gait["gait_hz"] * 0.02)
