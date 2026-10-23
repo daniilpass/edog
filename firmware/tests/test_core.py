@@ -61,7 +61,7 @@ def test_slew_limit(robot):
     robot.set_servo("FL_hip", angle=170)
     before = robot.servos["FL_hip"].current
     robot.step(0.02)
-    assert robot.servos["FL_hip"].current - before == pytest.approx(robot.speed_limit() * 0.02)
+    assert robot.servos["FL_hip"].current - before == pytest.approx(robot.m["max_speed_dps"] * 0.02)
 
 
 def test_servo_limits_clamped(robot):
@@ -335,14 +335,13 @@ def test_gait_profiles(robot):
     gaits = {g["name"]: g for g in robot.describe()["gaits"]}
     assert robot.state()["gait"] == robot.cfg.gait == "base"
     assert gaits["base"]["stride_mm"] == 30.0 and gaits["base"]["lift_mm"] == 15.0   # прежняя ходьба
-    assert gaits["base_slow"]["knee_peak_dps"] < gaits["base"]["knee_peak_dps"]
+    assert gaits["base"]["speed_mm_s"] == pytest.approx(2 * 30.0 * gaits["base"]["gait_hz"])
     with pytest.raises(ValueError):
         robot.set_gait("нет такого")
-    robot.set_gait("stopper")
-    assert robot.speed_limit() == robot.cfg.gaits["stopper"]["max_speed_dps"]
+    robot.set_gait("base_stopper")
     robot.save_calibration()
     data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
-    assert data["gait"] == "stopper"
+    assert data["gait"] == "base_stopper"
 
 
 def test_trim(robot):
@@ -451,26 +450,10 @@ def test_two_point_calibration(robot):
     assert c.scale == data["FR_hip"]["scale"]
 
 
-def test_crawl_keeps_three_feet_down(robot):
-    """Шаг: в воздухе не больше одной лапы, каждая за цикл поднимается; корпус качается."""
-    from edog.robot import body_sway, leg_step
-    g = {"pattern": "crawl", "gait_hz": 0.5, "stride_mm": 28.0, "lift_mm": 8.0, "swing": 0.1, "gap": 0.06,
-         "sway_mm": 4.0, "sway_roll_deg": 8.0}   # профиля шага в конфиге нет, код остался
-    lifted, sway = set(), set()
-    for i in range(400):
-        up = [leg for leg in robot.legs if leg_step(g, leg, i / 400, g["stride_mm"], g["lift_mm"])[1] > 0]
-        assert len(up) <= 1
-        lifted.update(up)
-        sway.add(tuple(round(v) for v in body_sway(g, i / 400)))
-    assert lifted == set(robot.legs)
-    a, r = round(g["sway_mm"]), round(g["sway_roll_deg"])
-    assert {(a, r), (-a, r), (a, -r), (-a, -r)} <= sway
-
-
 def test_gait_height_and_foot_offset(robot):
     """У каждого профиля своя стойка: выбор профиля ставит корпус на его height_mm, лапы — на foot_x_mm;
     при ходьбе назад лапы плавно уходят под ось бедра, после остановки — обратно."""
-    robot.set_gait("stopper")
+    robot.set_gait("base_stopper")
     g = robot.gait
     assert (robot.body.height, robot.body.foot_x) == (g["height_mm"], g["foot_x_mm"])
     feet = robot.feet(0.02)
@@ -524,7 +507,7 @@ def test_drive_leaves_manual_mode(robot):
 
 def test_gamepad_left_stick_dominant_axis(robot):
     from edog.gamepad import Gamepad
-    pad = Gamepad(robot, {})
+    pad = Gamepad(robot, robot.cfg.gamepad)
     pad.values = {"drive": -0.8, "turn": 0.3, "pitch": 0.0, "roll": 0.0, "height_down": 0.0, "height_up": 0.0}
     pad._apply()
     assert robot.pad_drive == (1.0, 0.0)
@@ -657,18 +640,16 @@ def test_walk_restart_waits_for_stand(robot):
     assert robot.walking and robot.phase == pytest.approx(robot.gait["gait_hz"] * 0.02)
 
 
-def test_next_gait_skips_slow(robot):
-    """Share на геймпаде: профили по кругу без медленных копий."""
-    names = [n for n in robot.cfg.gaits if not n.endswith("_slow")]
+def test_next_gait(robot):
+    """Share на геймпаде: профили по кругу."""
+    names = list(robot.cfg.gaits)
+    assert names == ["base", "base_stopper"]
     robot.set_gait(names[0])
     seen = []
     for _ in names:
         robot.next_gait()
         seen.append(robot.gait_name)
     assert seen == names[1:] + names[:1]
-    robot.set_gait(names[0] + "_slow")
-    robot.next_gait()
-    assert robot.gait_name == names[0]
 
 
 def test_roll_offset_from_bumpers(robot):

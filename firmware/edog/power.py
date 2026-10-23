@@ -1,19 +1,18 @@
 """Лимит тока серво: подключёнными можно отметить столько приводов,
 сколько их пиковый ток в сумме влезает в лимит блока питания."""
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from math import floor
 
 
 @dataclass
 class PowerCfg:
-    limit_a: float = 3.0   # лимит блока питания серво; 0 — без ограничения
-    servo_a: float = 0.9   # пиковый ток одного серво
+    limit_a: float   # лимит блока питания серво; 0 — без ограничения
+    servo_a: float   # пиковый ток одного серво
 
     @classmethod
     def from_dict(cls, data: dict) -> "PowerCfg":
-        names = {f.name for f in fields(cls)}
-        p = cls(**{k: float(v) for k, v in data.items() if k in names})
+        p = cls(float(data["limit_a"]), float(data["servo_a"]))
         p.validate()
         return p
 

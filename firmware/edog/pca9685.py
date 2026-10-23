@@ -41,13 +41,11 @@ class MockDriver:
 class PCA9685Driver:
     kind = "pca9685"
 
-    def __init__(self, bus: int = 1, address: int = 0x40, frequency_hz: float = 50,
-                 oscillator_hz: float = 25_000_000):
+    def __init__(self, bus: int, address: int, frequency_hz: float, oscillator_hz: float):
         from smbus2 import SMBus
 
         self.bus = SMBus(bus)
         self.address = address
-        self.frequency_hz = frequency_hz
         self._ticks: dict[int, int] = {}
 
         prescale = round(oscillator_hz / (4096 * frequency_hz)) - 1
@@ -89,14 +87,14 @@ class PCA9685Driver:
 
 def make_driver(cfg: dict):
     """Возвращает (драйвер, ошибка). При ошибке I²C — заглушка, чтобы портал всё равно работал."""
-    if cfg.get("type", "pca9685") == "mock":
+    if cfg["type"] == "mock":
         return MockDriver(), None
     try:
         return PCA9685Driver(
-            bus=cfg.get("i2c_bus", 1),
-            address=cfg.get("address", 0x40),
-            frequency_hz=cfg.get("frequency_hz", 50),
-            oscillator_hz=cfg.get("oscillator_hz", 25_000_000),
+            bus=cfg["i2c_bus"],
+            address=cfg["address"],
+            frequency_hz=cfg["frequency_hz"],
+            oscillator_hz=cfg["oscillator_hz"],
         ), None
     except Exception as e:  # нет I²C, нет платы, нет smbus2
         log.error("PCA9685 недоступен, работаю на заглушке: %s", e)

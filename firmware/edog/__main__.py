@@ -20,7 +20,7 @@ DEFAULT_CONFIG = ROOT / "config" / "config.toml"
 async def serve(cfg, robot) -> None:
     app, broadcast = create_app(robot)
     server = uvicorn.Server(uvicorn.Config(
-        app, host=cfg.server.get("host", "0.0.0.0"), port=cfg.server.get("port", 8080),
+        app, host=cfg.server["host"], port=cfg.server["port"],
         log_level="warning",
     ))
     tasks = [asyncio.create_task(t) for t in
@@ -48,7 +48,7 @@ def main() -> None:
         cfg.server["port"] = args.port
     driver, error = make_driver(cfg.driver)
     robot = Robot(cfg, driver, error)
-    logging.getLogger("edog").info("API: http://<хост>:%s/api, документация /docs", cfg.server.get("port", 8080))
+    logging.getLogger("edog").info("API: http://<хост>:%s/api, документация /docs", cfg.server["port"])
     asyncio.run(serve(cfg, robot))
 
 

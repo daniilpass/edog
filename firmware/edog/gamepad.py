@@ -18,16 +18,16 @@ TRIGGERS = ("height_down", "height_up")   # курки: 0 отпущен … 1 �
 class Gamepad:
     def __init__(self, robot, cfg: dict):
         self.robot = robot
-        self.deadzone = cfg.get("deadzone", 0.12)
+        self.deadzone = cfg["deadzone"]
         self.axes = {}
         self.buttons = {}
         if evdev is None:
             return
-        for role, name in cfg.get("axes", {}).items():
+        for role, name in cfg["axes"].items():
             self.axes[ecodes.ecodes[name]] = role
-        for name, action in cfg.get("buttons", {}).items():
+        for name, action in cfg["buttons"].items():
             self.buttons[ecodes.ecodes[name]] = action
-        self.dpad = cfg.get("dpad", {})   # up/down/left/right → действие
+        self.dpad = cfg["dpad"]   # up/down/left/right → действие
         self.values = {"drive": 0.0, "turn": 0.0, "pitch": 0.0, "roll": 0.0, "height_down": 0.0, "height_up": 0.0}
 
     def _find(self):
