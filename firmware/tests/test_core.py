@@ -592,3 +592,34 @@ def test_walk_restart_waits_for_stand(robot):
         if robot.walking:
             break
     assert robot.walking and robot.phase == pytest.approx(robot.gait["gait_hz"] * 0.02)
+
+
+def test_next_gait_skips_slow(robot):
+    """Share на геймпаде: профили по кругу без медленных копий."""
+    names = [n for n in robot.cfg.gaits if not n.endswith("_slow")]
+    robot.set_gait(names[0])
+    seen = []
+    for _ in names:
+        robot.next_gait()
+        seen.append(robot.gait_name)
+    assert seen == names[1:] + names[:1]
+    robot.set_gait(names[0] + "_slow")
+    robot.next_gait()
+    assert robot.gait_name == names[0]
+
+
+def test_roll_offset_from_bumpers(robot):
+    """Бамперы: постоянная добавка к крену, как поправка; сбрасывается при выключении серво."""
+    robot.set_enabled(True)
+    robot.set_body(roll=2)
+    rolled = robot.feet(0.02)
+    robot.set_body(roll=0)
+    robot.nudge_roll(1)
+    robot.nudge_roll(1)
+    assert robot.roll_offset == 2
+    assert robot.feet(0.02) == pytest.approx(rolled)
+    robot.set_pose("sit")
+    robot.set_pose("stand")
+    assert robot.roll_offset == 2          # позы её не сбрасывают
+    robot.estop()
+    assert robot.roll_offset == 0

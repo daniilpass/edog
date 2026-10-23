@@ -8,7 +8,8 @@ const MOVE_NAMES = { jump: 'Прыжок', joy: 'Радость' };
 const DPAD_LABELS = { up: 'крестовина ↑', down: 'крестовина ↓', left: 'крестовина ←', right: 'крестовина →' };
 const ACTION_NAMES = {
   stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', mount: 'монтаж', jump: 'прыжок', joy: 'радость',
-  torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп',
+  torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп', next_gait: 'следующий профиль шага',
+  roll_left: 'крен −1° (до выключения)', roll_right: 'крен +1° (до выключения)',
 };
 const AXIS_NAMES = { drive: 'вперёд/назад', turn: 'поворот', pitch: 'тангаж', roll: 'крен', height_down: 'опустить, пока нажат', height_up: 'поднять, пока нажат' };
 const BUTTON_LABELS = {
@@ -180,11 +181,12 @@ function render(s) {
     s.gamepad.connected ? 'ok' : s.gamepad.unavailable ? 'warn' : '');
   renderGamepad(s.gamepad);
 
-  for (const [k, v] of Object.entries(s.body)) {
-    const input = $(k);
-    if (input && document.activeElement !== input) input.value = v;
+  for (const k of ['height', 'pitch', 'roll']) {
+    const v = s.body[k], input = $(k);
+    if (document.activeElement !== input) input.value = v;
     $(`o-${k}`).textContent = k === 'height' ? `${v.toFixed(0)} мм` : `${v.toFixed(0)}°`;
   }
+  if (s.roll_offset) $('o-roll').textContent += ` · бамперы ${s.roll_offset > 0 ? '+' : ''}${s.roll_offset.toFixed(0)}°`;
   const d = s.drive;
   $('drive-info').textContent = `vx ${d.vx.toFixed(2)} · поворот ${d.turn.toFixed(2)} · ${d.source === 'web' ? 'портал' : 'геймпад'}`;
   $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', manual: 'ручной', demo: 'демо' }[s.mode]}`;

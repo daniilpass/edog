@@ -175,7 +175,9 @@ BTN_B = "sit"               # B
 BTN_X = "lie"               # X
 BTN_Y = "high"              # Y
 BTN_START = "torque_toggle" # Start / Options
-BTN_SELECT = "estop"        # Back / Share
+BTN_SELECT = "next_gait"    # Back / Share: следующий профиль ходьбы (медленные пропускаются)
+BTN_TL = "roll_left"        # LB / L1: крен −1° (левый борт ниже), держится до выключения серво
+BTN_TR = "roll_right"       # RB / R1: крен +1° (правый борт ниже)
 
 [gamepad.dpad]
 up = "jump"                 # крестовина вверх: прыжок

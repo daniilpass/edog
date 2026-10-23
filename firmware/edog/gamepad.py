@@ -85,6 +85,10 @@ class Gamepad:
                 r.set_enabled(not r.enabled)
             except ValueError as e:   # лимит тока: серво не включаются
                 log.warning("%s", e)
+        elif action in ("roll_left", "roll_right"):
+            r.nudge_roll(1 if action == "roll_right" else -1)
+        elif action == "next_gait":
+            r.next_gait()
         elif action == "estop":
             r.estop()
         else:

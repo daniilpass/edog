@@ -21,6 +21,7 @@ SWEEP_SPEED_DPS = 60
 # с полным моментом с первого мгновения (при плавной цели ошибка мала — и момент тоже).
 MOVE_SPEED_DPS = inf
 TRIM_MAX_DEG = 10.0          # поправка наклона корпуса на огрехи сборки, °
+ROLL_STEP_DEG = 1.0          # бамперы геймпада: шаг постоянной добавки к крену, °
 WALK_RAMP_S = 0.5            # разгон шага из стойки и уход лап под ось бедра при ходьбе назад, с
 POWER_DOWN_TIMEOUT_S = 5.0   # не дошла до монтажного положения за это время (нога у рамы) — сигнал снимается всё равно
 # Походки (pattern в профиле): сдвиг фазы каждой ноги и доля цикла в воздухе (swing, в профиле можно своё).
@@ -211,6 +212,7 @@ class Robot:
         self.mode = "stand"
         self.pose_name = "stand"
         self.tilt = (0.0, 0.0)          # смещение pitch/roll с геймпада, доля от max_tilt
+        self.roll_offset = 0.0          # постоянная добавка к крену с бамперов, °; сбрасывается при выключении
         self.pad_drive = (0.0, 0.0)     # vx, turn с геймпада
         self.height_rate = 0.0          # курки: −1 вниз … 1 вверх, доля от height_speed_mm_s
         self.web_drive = (0.0, 0.0)
@@ -333,6 +335,7 @@ class Robot:
         else:
             self.driver.all_off()
             self.signal = set()
+            self.roll_offset = 0.0
         log.info("серво %s", "включены" if enabled else "отключены")
 
     def estop(self) -> None:
@@ -483,6 +486,17 @@ class Robot:
         if self.mode == "stand" and self.pose_name == "stand" and not self.move_name and not self.demo:
             self.body = self.poses()["stand"]   # стоит — встаёт в стойку нового профиля
 
+    def nudge_roll(self, sign: int) -> None:
+        """Бамперы: крен на ROLL_STEP_DEG в сторону sign (+ — правый борт ниже), держится до выключения."""
+        self.roll_offset = clamp(self.roll_offset + sign * ROLL_STEP_DEG, -TRIM_MAX_DEG, TRIM_MAX_DEG)
+        log.info("добавка к крену: %+.0f°", self.roll_offset)
+
+    def next_gait(self) -> None:
+        """Следующий профиль ходьбы по кругу, медленные копии (*_slow) пропускаются."""
+        names = [n for n in self.cfg.gaits if not n.endswith("_slow")]
+        i = names.index(self.gait_name) if self.gait_name in names else -1
+        self.set_gait(names[(i + 1) % len(names)])
+
     def installed_count(self) -> int:
         return sum(s.cfg.installed for s in self.servos.values())
 
@@ -576,7 +590,7 @@ class Robot:
         roll = clamp(roll + w * body_sway(gait, self.phase)[1], -max_roll, max_roll)
         # огрехи сборки: корпус, стоящий «ровно» по командам, на деле наклонён — поправка сверх пределов
         pitch += self.cfg.trim["pitch_deg"]
-        roll += self.cfg.trim["roll_deg"]
+        roll += self.cfg.trim["roll_deg"] + self.roll_offset
 
         # Лапы задаются точками на полу (мир), потом переводятся в систему наклонённого корпуса.
         # Ноги двухзвенные, без отведения: боковое смещение лапы при крене не отрабатывается,
@@ -758,4 +772,5 @@ class Robot:
             "power": {**asdict(self.power), "max_servos": self.power.max_servos(),
                       "installed": self.installed_count()},
             "trim": dict(self.cfg.trim),
+            "roll_offset": self.roll_offset,
         }
