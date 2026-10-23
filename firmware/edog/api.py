@@ -43,6 +43,7 @@ class ServoReq(BaseModel):
 class CalibrationReq(BaseModel):
     installed: bool | None = None
     zero: float | None = None
+    scale: float | None = Field(None, description="градусов серво на градус сустава")
     dir: Literal[-1, 1] | None = None
     min_deg: float | None = None
     max_deg: float | None = None
@@ -79,6 +80,8 @@ class MacReq(BaseModel):
 
 class CalibrateReq(BaseModel):
     joint: float = Field(..., description="угол сустава, который нога физически показывает сейчас")
+    what: Literal["zero", "scale"] = Field("zero", description="zero — сдвиг; scale — вторая точка, "
+                                           "масштаб при неподвижном монтажном положении")
 
 
 def create_app(robot) -> tuple[FastAPI, callable]:
@@ -168,7 +171,7 @@ def create_app(robot) -> tuple[FastAPI, callable]:
 
     @app.post("/api/servos/{sid}/calibrate")
     def calibrate(sid: str, req: CalibrateReq):
-        return servo_call(robot.calibrate, sid, req.joint)
+        return servo_call(robot.calibrate, sid, req.joint, req.what)
 
     @app.post("/api/calibration/save")
     def save_calibration():

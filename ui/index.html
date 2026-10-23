@@ -141,12 +141,20 @@
             <div class="row"><button id="cal-min-cur">min = текущий</button>
               <button id="cal-max-cur">max = текущий</button></div></li>
           <li><b>Проверка:</b> <i>Проход по ходу</i> — серво медленно пройдёт min → max и вернётся.</li>
+          <li><b>Под нагрузкой</b> (когда собрана вся собака): поставьте её на стол, нажмите
+            <button id="cal-load-pose" title="Все суставы в калибровочную позу под нагрузкой: почти стойка base">Поза под нагрузкой</button>.
+            Кнопками ±1° доведите сустав, чтобы <span id="wz-load-hint"></span>, и запишите.
+            Монтажное положение при этом не сдвигается.
+            <div class="row">сустав сейчас =
+              <input type="number" id="cal-load-joint" value="0" step="1" class="narrow">°
+              <button id="cal-load-set">Записать</button></div></li>
         </ol>
 
         <details>
           <summary>Значения вручную</summary>
           <div class="calib">
             <label>zero <input type="number" id="cal-zero" step="0.5"></label>
+            <label>scale <input type="number" id="cal-scale" min="0.7" max="1.3" step="0.01"></label>
             <label>dir <select id="cal-dir"><option>1</option><option>-1</option></select></label>
             <label>min <input type="number" id="cal-min" step="1"></label>
             <label>max <input type="number" id="cal-max" step="1"></label>

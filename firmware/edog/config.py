@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 JOINTS = ("hip", "knee")
-CALIB_FIELDS = ("installed", "zero", "dir", "min_deg", "max_deg")
+CALIB_FIELDS = ("installed", "zero", "scale", "dir", "min_deg", "max_deg")
 
 
 @dataclass
@@ -17,8 +17,10 @@ class ServoCfg:
     channel: int
     installed: bool = False
     ref_deg: float = 0.0
+    load_deg: float = 0.0   # угол сустава в калибровочной позе под нагрузкой
     dir: int = 1
     zero: float = 90.0
+    scale: float = 1.0      # градусов серво на градус сустава: ход реального серво ≠ номинальному
     min_deg: float = 5.0
     max_deg: float = 175.0
     range_deg: float = 180.0
@@ -68,9 +70,11 @@ def load_config(path: str | Path) -> Config:
             raise ValueError(f"legs.{name}.side: ожидается left/right")
         legs.append(LegCfg(name, leg["side"], float(leg["x_mm"]), int(leg.get("knee_dir", -1))))
         for joint in JOINTS:
-            params = {"ref_deg": joints.get(joint, {}).get("ref_deg", 0.0), **defaults, **leg[joint]}
+            ref = joints.get(joint, {}).get("ref_deg", 0.0)
+            params = {"ref_deg": ref, "load_deg": joints.get(joint, {}).get("load_deg", ref), **defaults, **leg[joint]}
             if "zero" not in params:
-                params["zero"] = params.get("range_deg", 180.0) / 2 - params.get("dir", 1) * params["ref_deg"]
+                params["zero"] = (params.get("range_deg", 180.0) / 2
+                                  - params.get("dir", 1) * params.get("scale", 1.0) * params["ref_deg"])
             servos.append(ServoCfg(id=f"{name}_{joint}", leg=name, joint=joint, **params))
 
     channels = [s.channel for s in servos]

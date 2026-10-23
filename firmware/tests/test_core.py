@@ -388,6 +388,69 @@ def test_mount_pose(robot):
     assert robot.mode == "stand" and robot.pose_name == "stand"
 
 
+def test_load_pose_near_base_stance(guarded):
+    """Поза под нагрузкой: суставы в load_deg, собака стоит на лапах почти как в стойке base;
+    из стойки и из монтажного положения доходит без упора в раму."""
+    r = guarded
+    g = r.g
+    r.set_enabled(True)
+    for start in ("stand", "mount"):
+        r.set_pose(start)
+        for _ in range(200):
+            r.step(0.02)
+        r.set_pose("load")
+        for _ in range(200):
+            r.step(0.02)
+        assert r.mode == "manual" and r.pose_name == "load" and not any(r.blocked.values())
+    for name in r.legs:
+        _, (x, z) = fk(*r._leg_joints(name, "current"), g["femur_mm"], g["tibia_mm"], g["tibia_bend_deg"])
+        assert x == pytest.approx(r.cfg.gaits["base"]["foot_x_mm"], abs=3) and z == pytest.approx(70, abs=4)
+
+
+def test_set_servo_leaves_pose(robot):
+    robot.set_enabled(True)
+    robot.set_pose("stand")
+    robot.set_servo("FL_hip", joint=-40)
+    assert robot.mode == "manual" and robot.pose_name is None
+
+
+def test_two_point_calibration(robot):
+    """zero — в монтажном положении, scale — под нагрузкой: монтажное положение не сдвигается,
+    а угол под нагрузкой приходится на текущий угол серво."""
+    s = robot.servos["FR_hip"]
+    c = s.cfg
+    robot.set_enabled(True)
+    robot.set_servo(s.cfg.id, angle=92)
+    for _ in range(50):
+        robot.step(0.02)
+    robot.calibrate(c.id, c.ref_deg)
+    assert s.joint_to_servo(c.ref_deg) == pytest.approx(92)
+    # серво недоходит: на −45° по калибровке сустав реально только на −40°
+    robot.set_servo(c.id, joint=-45)
+    for _ in range(50):
+        robot.step(0.02)
+    at_load = s.current
+    robot.calibrate(c.id, -40, "scale")
+    assert c.scale == pytest.approx(45 / 40, abs=1e-3)
+    assert s.joint_to_servo(c.ref_deg) == pytest.approx(92)
+    assert s.servo_to_joint(at_load) == pytest.approx(-40, abs=0.01)
+    # zero после scale — сдвиг при том же масштабе
+    robot.calibrate(c.id, -41)
+    assert c.scale == pytest.approx(45 / 40, abs=1e-3) and s.servo_to_joint(s.current) == pytest.approx(-41, abs=0.01)
+    with pytest.raises(ValueError, match="монтажному"):
+        robot.calibrate(c.id, c.ref_deg + 5, "scale")
+    with pytest.raises(ValueError, match="вне"):
+        robot.calibrate(c.id, -10, "scale")
+    with pytest.raises(ValueError, match="scale"):
+        robot.update_calibration(c.id, scale=2.0)
+    robot.save_calibration()
+    data = json.loads(robot.cfg.calibration_path.read_text(encoding="utf-8"))
+    assert data["FR_hip"]["scale"] == c.scale
+    c.scale = 1.0
+    _apply_calibration(robot.cfg)
+    assert c.scale == data["FR_hip"]["scale"]
+
+
 def test_crawl_keeps_three_feet_down(robot):
     """Шаг: в воздухе не больше одной лапы, каждая за цикл поднимается; корпус качается."""
     from edog.robot import body_sway, leg_step

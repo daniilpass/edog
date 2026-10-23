@@ -23,6 +23,11 @@ MOVE_SPEED_DPS = inf
 TRIM_MAX_DEG = 10.0          # поправка наклона корпуса на огрехи сборки, °
 ROLL_STEP_DEG = 1.0          # бамперы геймпада: шаг постоянной добавки к крену, °
 WALK_RAMP_S = 0.5            # разгон шага из стойки и уход лап под ось бедра при ходьбе назад, с
+SCALE_MIN_SPAN_DEG = 10.0    # масштаб пишется не ближе этого к монтажному положению: иначе ошибка угла раздувается
+SCALE_RANGE = (0.7, 1.3)     # масштаб за этими пределами — скорее промах при калибровке, чем серво
+# Позы, заданные углами суставов, а не корпусом (ручной режим — контур углы не пересчитывает):
+# mount — монтажное положение (ref_deg), load — калибровочная поза под нагрузкой (load_deg).
+JOINT_POSES = {"mount": "ref_deg", "load": "load_deg"}
 POWER_DOWN_TIMEOUT_S = 5.0   # не дошла до монтажного положения за это время (нога у рамы) — сигнал снимается всё равно
 # Походки (pattern в профиле): сдвиг фазы каждой ноги и доля цикла в воздухе (swing, в профиле можно своё).
 PATTERNS = {
@@ -161,10 +166,10 @@ class Servo:
         self.queue: list[float] = []  # тестовый проход по ходу: следующие цели
 
     def joint_to_servo(self, joint_deg: float) -> float:
-        return self.cfg.zero + self.cfg.dir * joint_deg
+        return self.cfg.zero + self.cfg.dir * self.cfg.scale * joint_deg
 
     def servo_to_joint(self, servo_deg: float) -> float:
-        return (servo_deg - self.cfg.zero) * self.cfg.dir
+        return (servo_deg - self.cfg.zero) * self.cfg.dir / self.cfg.scale
 
     def set_target(self, servo_deg: float) -> None:
         c = self.cfg
@@ -184,7 +189,8 @@ class Servo:
             "joint_target": round(self.servo_to_joint(self.target), 2),
             "pulse_us": round(self.pulse_us(self.current)),
             "installed": c.installed, "sweeping": bool(self.queue),
-            "ref_deg": c.ref_deg, "zero": c.zero, "dir": c.dir, "min_deg": c.min_deg, "max_deg": c.max_deg,
+            "ref_deg": c.ref_deg, "load_deg": c.load_deg, "zero": c.zero, "scale": c.scale, "dir": c.dir,
+            "min_deg": c.min_deg, "max_deg": c.max_deg,
             "clamped": self.clamped,
             "frame_blocked": False,   # заполняет Robot.state()
         }
@@ -259,8 +265,7 @@ class Robot:
         }
 
     def pose_names(self) -> list[str]:
-        # mount — монтажное положение: задано углами суставов (ref_deg), а не корпусом
-        return [*self.poses(), "mount"]
+        return [*self.poses(), *JOINT_POSES]
 
     def moves(self) -> dict[str, list[tuple[Body, float, float | None]]]:
         """Движения: шаги (корпус, сколько держать, с; скорость серво, °/с, или None — обычная).
@@ -356,12 +361,11 @@ class Robot:
             s.queue.clear()
 
     def set_pose(self, name: str) -> None:
-        if name == "mount":
-            # как перед выключением: суставы в ref_deg; ручной режим — контур углы не пересчитывает
+        if name in JOINT_POSES:
             self.stop_demo()
             self._stop_tests()
             for s in self.servos.values():
-                s.set_target(s.joint_to_servo(s.cfg.ref_deg))
+                s.set_target(s.joint_to_servo(getattr(s.cfg, JOINT_POSES[name])))
             self.mode = "manual"
             self.pose_name = name
             return
@@ -409,6 +413,7 @@ class Robot:
                 raise ValueError(f"{c.id}: колено упрётся в раму (бедро {new[0]:.0f}°, колено {new[1]:.0f}°)")
         self.stop_demo()
         self.mode = "manual"
+        self.pose_name = None   # сустав сдвинут руками — собака уже не в позе
         s.queue.clear()
         s.set_target(servo_deg)
 
@@ -442,6 +447,8 @@ class Robot:
                 continue
             if key == "dir" and value not in (-1, 1):
                 raise ValueError("dir: -1 или 1")
+            if key == "scale" and not SCALE_RANGE[0] <= value <= SCALE_RANGE[1]:
+                raise ValueError(f"scale: {SCALE_RANGE[0]} … {SCALE_RANGE[1]}")
             if key == "installed" and value and not c.installed:
                 self.power.check(self.installed_count() + 1)
             setattr(c, key, value)
@@ -454,10 +461,28 @@ class Robot:
         s = self.servos[sid]
         s.set_target(s.target)
 
-    def calibrate(self, sid: str, joint_deg: float) -> None:
-        """Текущее положение серво соответствует углу сустава joint_deg."""
+    def calibrate(self, sid: str, joint_deg: float, what: str = "zero") -> None:
+        """Текущее положение серво соответствует углу сустава joint_deg.
+        zero — сдвиг, масштаб прежний (монтажное положение или колено под нагрузкой).
+        scale — вторая точка (поза под нагрузкой): масштаб подбирается так, чтобы монтажное положение
+        осталось на месте, а joint_deg пришёлся на текущий угол серво. Сначала zero, потом scale."""
         s = self.servos[sid]
-        s.cfg.zero = round(s.current - s.cfg.dir * joint_deg, 1)
+        c = s.cfg
+        if what == "zero":
+            c.zero = round(s.current - c.dir * c.scale * joint_deg, 2)
+            return
+        if what != "scale":
+            raise ValueError("калибровка: zero или scale")
+        span = joint_deg - c.ref_deg
+        if abs(span) < SCALE_MIN_SPAN_DEG:
+            raise ValueError(f"масштаб: сустав ближе {SCALE_MIN_SPAN_DEG:.0f}° к монтажному положению — запишите zero")
+        at_ref = s.joint_to_servo(c.ref_deg)
+        scale = round(c.dir * (s.current - at_ref) / span, 4)
+        if not SCALE_RANGE[0] <= scale <= SCALE_RANGE[1]:
+            raise ValueError(f"масштаб {scale:.3f} вне {SCALE_RANGE[0]} … {SCALE_RANGE[1]}: "
+                             f"проверьте угол сустава и что zero записан в монтажном положении")
+        c.scale = scale
+        c.zero = round(at_ref - c.dir * scale * c.ref_deg, 2)
 
     def save_calibration(self) -> str:
         return str(save_calibration(self.cfg, self.servos.values(), asdict(self.power), self.gait_name, self.cfg.trim))

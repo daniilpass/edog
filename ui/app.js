@@ -3,11 +3,11 @@ import { Dog3D } from './dog3d.js';
 const $ = id => document.getElementById(id);
 const LEG_NAMES = { FL: 'перед. левая', FR: 'перед. правая', RL: 'задн. левая', RR: 'задн. правая' };
 const JOINT_NAMES = { hip: 'бедро', knee: 'колено' };
-const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко', mount: 'Монтаж' };
+const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко', mount: 'Монтаж', load: 'Под нагрузкой' };
 const MOVE_NAMES = { jump: 'Прыжок', joy: 'Радость' };
 const DPAD_LABELS = { up: 'крестовина ↑', down: 'крестовина ↓', left: 'крестовина ←', right: 'крестовина →' };
 const ACTION_NAMES = {
-  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', mount: 'монтаж', jump: 'прыжок', joy: 'радость',
+  stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', mount: 'монтаж', load: 'под нагрузкой', jump: 'прыжок', joy: 'радость',
   torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп', next_gait: 'следующий профиль шага',
   roll_left: 'крен −1° (до выключения)', roll_right: 'крен +1° (до выключения)',
 };
@@ -292,13 +292,17 @@ function select(id) {
   const sv = state?.servos.find(s => s.id === id);
   if (sv) {
     $('cal-joint').value = sv.ref_deg;
+    $('cal-load-joint').value = sv.load_deg;
     $('cal-zero').value = sv.zero;
+    $('cal-scale').value = sv.scale;
     $('cal-dir').value = sv.dir;
     $('cal-min').value = sv.min_deg;
     $('cal-max').value = sv.max_deg;
   }
   renderDetail();
 }
+
+const loadWhat = sv => Math.abs(sv.load_deg - sv.ref_deg) >= 10 ? 'scale' : 'zero';
 
 function renderDetail() {
   const sv = state?.servos.find(s => s.id === selected);
@@ -314,13 +318,18 @@ function renderDetail() {
     ['Угол сустава', `${sv.joint_current.toFixed(1)}° (цель ${sv.joint_target.toFixed(1)}°)`],
     ['Угол серво', `${sv.current.toFixed(1)}° (цель ${sv.target.toFixed(1)}°)`],
     ['Сигнал', signal],
-    ['zero / dir', `${sv.zero}° / ${sv.dir > 0 ? '+1' : '−1'}`],
+    ['zero / scale / dir', `${sv.zero}° / ${sv.scale} / ${sv.dir > 0 ? '+1' : '−1'}`],
     ['Пределы', `${sv.min_deg}° … ${sv.max_deg}°`],
     ['Рама', !state.frame_guard ? '⚠ защита от упора выключена (нет leg_hull.json)'
       : sv.frame_blocked ? '⚠ УПОР: колено дошло до плоскости рамы, дальше не пойдёт' : 'колено ниже плоскости рамы'],
   ].map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
   $('wz-zero-hint').textContent = sv.joint === 'hip'
     ? `бедро смотрело вертикально вниз (${sv.ref_deg}°)` : `голень стояла под ${sv.ref_deg}° к бедру`;
+  $('wz-load-hint').textContent = sv.joint === 'hip'
+    ? `бедро отклонилось нижним концом назад на ${-sv.load_deg}° от вертикали (угольник ${-sv.load_deg}° к раме)`
+    : `голень стоит под ${sv.load_deg}° к бедру`;
+  // далеко от монтажного положения — вторая точка (масштаб), рядом — тот же zero, но под весом
+  $('cal-load-set').textContent = loadWhat(sv) === 'scale' ? 'Записать масштаб' : 'Записать zero под нагрузкой';
   $('wz-dir-hint').textContent = sv.joint === 'hip'
     ? 'бедро должно качнуться вперёд, к голове' : 'голень должна повернуться вперёд, к голове';
   $('sd-sweep').textContent = sv.sweeping ? 'Остановить проход' : 'Проход по ходу';
@@ -352,11 +361,18 @@ function bindControls() {
   const patch = body => api('PATCH', `/api/servos/${selected}/calibration`, body)
     .then(() => { calibDirty = true; select(selected); });
   $('cal-apply').onclick = () => patch({
-    zero: Number($('cal-zero').value), dir: Number($('cal-dir').value),
+    zero: Number($('cal-zero').value), scale: Number($('cal-scale').value), dir: Number($('cal-dir').value),
     min_deg: Number($('cal-min').value), max_deg: Number($('cal-max').value),
   });
   $('cal-set').onclick = () => api('POST', `/api/servos/${selected}/calibrate`, { joint: Number($('cal-joint').value) })
     .then(s => { calibDirty = true; select(selected); toast(`zero = ${s.servos.find(x => x.id === selected).zero}°`); });
+  $('cal-load-set').onclick = () => api('POST', `/api/servos/${selected}/calibrate`,
+    { joint: Number($('cal-load-joint').value), what: loadWhat(current()) })
+    .then(s => {
+      const sv = s.servos.find(x => x.id === selected);
+      calibDirty = true; select(selected); toast(`zero = ${sv.zero}°, scale = ${sv.scale}`);
+    });
+  $('cal-load-pose').onclick = () => api('POST', '/api/pose/load');
   $('cal-flip').onclick = () => patch({ dir: -current().dir });
   $('cal-min-cur').onclick = () => patch({ min_deg: Math.round(current().current * 2) / 2 });
   $('cal-max-cur').onclick = () => patch({ max_deg: Math.round(current().current * 2) / 2 });
