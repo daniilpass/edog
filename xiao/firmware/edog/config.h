@@ -17,7 +17,7 @@ static const int CAMERA_FPS = 8;              // кадров в секунду 
 #define CAMERA_FRAMESIZE FRAMESIZE_VGA        // 640×480
 static const int CAMERA_QUALITY = 12;         // JPEG: 0 — лучше … 63 — хуже
 static const bool CAMERA_VFLIP = false;       // камера стоит вверх ногами
-static const bool CAMERA_HMIRROR = false;
+static const bool CAMERA_HMIRROR = true;
 
 // ---------- драйвер PCA9685 ----------
 static const int I2C_SDA = 5;                 // D4
