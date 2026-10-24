@@ -1,6 +1,8 @@
 # Edog
 
-Робопёс на 3D-печати с управлением с Raspberry Pi.
+Робопёс на 3D-печати на XIAO ESP32-S3 Sense.
+
+> **`rpi/` — легаси.** Собака переехала с Raspberry Pi на XIAO ESP32-S3. Папку `rpi/` не правим и не развиваем, вся работа идёт в `xiao/` и `ui/`.
 
 ## Структура проекта
 
@@ -13,7 +15,7 @@ cad/
     tests/         — тестовые вставки для проверки посадок
   web/           — облегчённые модели и manifest.json для 3D в веб-портале (выгружает export_web_models.py)
 ui/            — общий веб-портал с 3D-моделью (для RPi и XIAO), запускается на ПК: start.cmd или python ui/serve.py
-rpi/           — всё для Raspberry Pi
+rpi/           — ЛЕГАСИ, не трогаем: всё для Raspberry Pi
   firmware/      — сервис: серво, геймпад, API (см. rpi/firmware/README.md); на Pi лежит в ~/edog/firmware
   tools/         — консольные утилиты для собаки
 xiao/          — всё для XIAO ESP32-S3 Sense: прошивка собаки (замена RPi, плюс видео в портале), тестовая прошивка (см. xiao/README.md)
