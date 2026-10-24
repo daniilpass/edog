@@ -2,7 +2,8 @@
 # Запуск в FreeCAD (консоль Python или MCP):
 #   exec(open(r"C:/git/edog/cad/web/export_web_models.py", encoding="utf-8").read())
 #
-# Источники: корпус и серво бёдер — EDOG_T_Front_Mark.FCStd, бедро и голень — cad/custom/*.stl.
+# Источники: корпус и серво бёдер — EDOG_T_Front_Mark.FCStd, бедро — Femur_hub71_double.FCStd (без поддержек),
+# голень — cad/custom/tibia*.stl.
 # Платы, провода, гайки и крышка в портал не выгружаются (крышка — по желанию, см. BODY_PARTS).
 #
 # Система координат портала (мм): x — вперёд, y — вверх, z — вправо.
@@ -25,13 +26,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if "__file__"
 OUT = os.path.join(ROOT, "web")
 SRC = os.path.join(ROOT, "freecad", "EDOG_T_Front_Mark.FCStd")
 FIX = os.path.join(ROOT, "custom")
+FEMUR_SRC = os.path.join(ROOT, "freecad", "Femur_hub71_double.FCStd")
 
 # --- геометрия, снятая с моделей (см. docs) ---
 HIP_X = {"F": 122.07, "R": 9.70}            # оси бёдер по X в сборке (серво бедра валом к краю рамы)
 SHAFT_TIP_Y = {"L": 101.42, "R": -31.50}    # торцы валов бёдер по Y
 HIP_Z = -3.90
 CENTER = V((HIP_X["F"] + HIP_X["R"]) / 2, 34.96, HIP_Z)
-FEMUR = 50.0                                 # между отверстиями Femur_hub71_double (как у Femur_hub7)
+FEMUR = 50.0                                 # между отверстиями бедра (femur_double_with_supports, как у оригинала)
 FEMUR_THICK = 9.0
 HORN_GAP = 3.0                               # торец вала заходит в бедро на 3 мм
 TIB_SHAFT = V(0, 11.5 - 5.2, 5.98)           # ось вала колена в файле голени
@@ -152,9 +154,13 @@ def main():
     finally:
         FreeCAD.closeDocument(doc.Name)
 
-    femur_mesh = Mesh.Mesh(os.path.join(FIX, "Femur_hub71_double.stl"))
-    tibia_mesh = Mesh.Mesh(os.path.join(FIX, "Tibia_v2_SG90_fit.stl"))
-    insert_mesh = Mesh.Mesh(os.path.join(FIX, "Tibia_v2_SG90_fit_insert.stl"))
+    doc = FreeCAD.openDocument(FEMUR_SRC, hidden=True)
+    try:
+        femur_mesh = shape_mesh(doc.getObject("Femur_double_horn").Shape)
+    finally:
+        FreeCAD.closeDocument(doc.Name)
+    tibia_mesh = Mesh.Mesh(os.path.join(FIX, "tibia.stl"))
+    insert_mesh = Mesh.Mesh(os.path.join(FIX, "tibia_insert.stl"))
     pad_mesh, pad_tip = foot_pad()
     tibia_len = foot_tip = None
     for leg in ("FL", "FR", "RL", "RR"):

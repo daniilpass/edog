@@ -9,7 +9,7 @@ Edog — 3D-печатный квадропод. База — открытый �
 ## Чем наша версия отличается от оригинала
 - В оригинале Raspberry Pi Zero WH; в нашей сборке — Raspberry Pi 3B+ и адаптированная площадка (`cad/freecad/body_magnets.FCStd`, STL — `cad/custom/chassis_small.stl` и `cad/custom/platform_small.stl`).
 - Исправлена геометрия блока привода (motor bloc): `cad/origin/geometry_fix/fixed_motor_bloc.stl`.
-- Femur: посадочное место под крыло серво расширено под MG90S: `cad/custom/Femur_hub7.stl`. Подробности — [cad/custom/README.md](../cad/custom/README.md).
+- Femur: посадочное место под крыло серво расширено под MG90S, затем бедро переделано под двухсторонний лепесток: `cad/custom/femur_with_supports.stl` и `cad/custom/femur_double_with_supports.stl`. Подробности — [cad/custom/README.md](../cad/custom/README.md).
 - Серво: в оригинале SG90/VOTIK 7455, у нас — MG90S
 
 ## Текущий прототип

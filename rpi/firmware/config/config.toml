@@ -14,8 +14,8 @@ frequency_hz = 50
 oscillator_hz = 25000000  # у разных плат PCA9685 реально 25–27 МГц; ошибку хода закрывает scale калибровки
 
 [geometry]
-femur_mm = 50.0           # между осями крыльев на Femur (Femur_hub7: 50 мм)
-tibia_mm = 41.7           # ось колена → середина подошвы (Tibia_v2_SG90_fit, см. cad/web)
+femur_mm = 50.0           # между осями крыльев на Femur (femur_*.stl: 50 мм)
+tibia_mm = 41.7           # ось колена → середина подошвы (tibia.stl, см. cad/web)
 tibia_bend_deg = 17.7     # изгиб голени: линия «ось колена → подошва» отклонена от корпуса голени
 frame_margin_mm = 3.0     # запас: узел колена держится ниже плоскости рамы (leg_hull.json) на столько мм
 body_length_mm = 200.0
