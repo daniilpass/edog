@@ -1,4 +1,4 @@
-"""Оболочки узла колена для проверки «не заходить выше рамы» → firmware/config/leg_hull.json.
+"""Оболочки узла колена для проверки «не заходить выше рамы» → rpi/firmware/config/leg_hull.json.
 
 Запуск на ПК после export_web_models.py:  python cad/web/make_leg_hull.py
 
@@ -16,7 +16,7 @@ import struct
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parent
-OUT = WEB.parent.parent / "firmware" / "config" / "leg_hull.json"
+OUT = WEB.parent.parent / "rpi" / "firmware" / "config" / "leg_hull.json"
 # Плоскость согласована 2026-10-18: нижняя грань средней перекладины рамы (FramePlane
 # в EDOG_S_Web_Assembly), Z = −3.38 в сборке; ось бедра Z = −3.90 → плоскость на 0.52 мм выше оси.
 FRAME_PLANE_ABOVE_HIP_MM = -3.38 - (-3.90)

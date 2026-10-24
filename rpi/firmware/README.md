@@ -5,7 +5,7 @@
 - принимает Bluetooth-геймпад;
 - отдаёт REST/WebSocket API.
 
-На Pi работает только API. Веб-портал с 3D-моделью лежит в [`ui/`](../ui/) и запускается на ПК (см. «Портал» ниже).
+На Pi работает только API. Веб-портал с 3D-моделью лежит в [`ui/`](../../ui/) и запускается на ПК (см. «Портал» ниже).
 
 ```
 edog/            код сервиса
@@ -26,12 +26,12 @@ os/
 ## Портал (на ПК)
 
 ```bash
-python ui/serve.py            # http://localhost:8000/
-python ui/serve.py --lan      # плюс доступ с телефона в той же сети
+python ui/serve.py          # http://localhost:8000/
+python ui/serve.py --lan    # плюс доступ с телефона в той же сети
 ```
 
 - **Адрес собаки** вводится в поле «Собака» в шапке, например `192.168.50.129:8080`, или передаётся ссылкой `?dog=…`. Браузер его запоминает.
-- **Модели** портал берёт из [`cad/web/`](../cad/web/), их выгружает `cad/web/export_web_models.py` из FreeCAD. Если манифеста нет, собака рисуется примитивами.
+- **Модели** портал берёт из [`cad/web/`](../../cad/web/), их выгружает `cad/web/export_web_models.py` из FreeCAD. Если манифеста нет, собака рисуется примитивами.
 - **Зависимостей нет**: нужен только Python, three.js лежит в `ui/vendor`, интернет не нужен.
 - **Статусы в шапке** текстом: к какой собаке подключён портал, есть ли связь, PCA9685 и геймпад. При обрыве связи поверх модели появляется «НЕТ СВЯЗИ С СОБАКОЙ».
 
@@ -44,9 +44,9 @@ python ui/serve.py --lan      # плюс доступ с телефона в т�
    - включить SSH.
 2. С ПК (Git Bash) отправить прошивку на Pi:
    ```bash
-   firmware/os/deploy.sh <user>@edog.local
+   rpi/firmware/os/deploy.sh <user>@edog.local
    ```
-   На Pi попадает только `firmware/` (без тестов), меньше 1 МБ. Репозиторий, портал и CAD на Pi не нужны.
+   На Pi попадает только `rpi/firmware/` (в `~/edog/firmware`, без тестов), меньше 1 МБ. Репозиторий, портал и CAD на Pi не нужны.
 3. На Pi запустить настройку и перезагрузиться:
    ```bash
    ssh <user>@edog.local
@@ -63,7 +63,7 @@ journalctl -u edog -f     # логи сервиса
 sudo systemctl restart edog
 ```
 
-Обновление кода — с ПК: `firmware/os/deploy.sh`. Скрипт заменит код, перезапустит сервис и не тронет venv и `calibration.json`.
+Обновление кода — с ПК: `rpi/firmware/os/deploy.sh`. Скрипт заменит код, перезапустит сервис и не тронет venv и `calibration.json`.
 
 ## Проверка без PCA9685 и серво
 
@@ -153,6 +153,6 @@ cd firmware
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt pytest   # Linux: .venv/bin/pip
 .venv/Scripts/python -m edog --mock                     # API на http://localhost:8080/
-python ../ui/serve.py                                   # портал: http://localhost:8000/?dog=localhost:8080
+python ../../ui/serve.py                                # портал: http://localhost:8000/?dog=localhost:8080
 .venv/Scripts/python -m pytest
 ```

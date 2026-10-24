@@ -1,0 +1,190 @@
+<!doctype html>
+<!-- Проверка XIAO ESP32-S3 Sense (прошивка xiao/firmware/xiao_test): видео, звук, состояние, Wi-Fi.
+     python xiao/ui/serve.py → http://localhost:8001/?board=edog-xiao.local -->
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EDOG XIAO</title>
+<style>
+:root{--bg:#f6f6f4;--fg:#1d1d1b;--card:#fff;--line:#d8d8d4;--muted:#6b6b66;--acc:#1f5fbf}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--fg:#ececea;--card:#222220;--line:#3a3a37;--muted:#9a9a94;--acc:#7aa7ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+header b{font-size:18px}
+main{max-width:960px;margin:0 auto;padding:16px;display:grid;gap:16px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+h2{font-size:15px;margin:0 0 10px}
+#video{width:100%;background:#000;border-radius:6px;min-height:120px;display:block}
+table{border-collapse:collapse;width:100%}
+td{padding:4px 0;border-bottom:1px solid var(--line);vertical-align:top}
+td:first-child{color:var(--muted);width:40%}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+button,select,input{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+button{cursor:pointer}
+button.on{border-color:var(--acc);color:var(--acc);font-weight:600}
+meter{width:200px;height:14px}
+.muted{color:var(--muted);font-size:13px}
+#nets div{padding:4px 0;cursor:pointer;border-bottom:1px solid var(--line)}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+</style></head><body>
+<header>
+<b>EDOG — проверка XIAO ESP32-S3 Sense</b>
+<form id="bf" class="row" style="margin:0">
+<label>Плата <input id="board" placeholder="edog-xiao.local" spellcheck="false"></label>
+<button>Подключить</button>
+</form>
+<span id="link" class="muted"></span>
+</header>
+<main>
+
+<section><h2>Камера</h2>
+<img id="video" alt="видео">
+<div class="row">
+<button id="vbtn" class="on">Видео: идёт</button>
+<label>Размер <select id="fs">
+<option value="5">320×240</option><option value="8">640×480</option>
+<option value="9">800×600</option><option value="10">1024×768</option>
+<option value="13">1600×1200</option></select></label>
+<label><input type="checkbox" id="vflip"> перевернуть</label>
+<label><input type="checkbox" id="hmirror"> зеркально</label>
+<span id="fps" class="muted"></span>
+</div></section>
+
+<section><h2>Микрофон</h2>
+<div class="row">
+<button id="abtn">Звук: выключен</button>
+<label>Громкость <input type="range" id="gain" min="1" max="30" value="8"></label>
+<span id="gainv" class="muted">×8</span>
+</div>
+<div class="row">Уровень <meter id="lvl" min="0" max="100"></meter> <span id="lvlv"></span></div>
+<p class="muted">Щёлкните пальцами у платы: уровень должен подскочить. Звук идёт с задержкой ~0.3 с.</p>
+</section>
+
+<div class="grid">
+<section><h2>Плата</h2><table id="st"></table></section>
+<section><h2>Wi-Fi платы</h2>
+<div class="row"><button id="scan">Найти сети</button><span id="scanst" class="muted"></span></div>
+<div id="nets"></div>
+<form id="wf" class="row">
+<input id="ssid" placeholder="сеть (SSID)" required>
+<input id="pass" type="password" placeholder="пароль">
+<button>Сохранить и перезагрузить</button>
+</form>
+<p id="wmsg" class="muted">Если плата в режиме точки доступа: подключите ПК к сети EDOG-XIAO (пароль edog1234) и укажите плату 192.168.4.1.</p>
+</section>
+</div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const KEY = 'edog.xiao.board';
+
+// Порядок: ?board=… в ссылке → сохранённый в браузере → edog-xiao.local.
+const B = (() => {
+  const fromUrl = new URLSearchParams(location.search).get('board');
+  try {
+    if (fromUrl) localStorage.setItem(KEY, fromUrl);
+    return fromUrl || localStorage.getItem(KEY) || 'edog-xiao.local';
+  } catch { return fromUrl || 'edog-xiao.local'; }
+})();
+const api = `http://${B}`, streamUrl = `http://${B}:81/stream`, audioUrl = `http://${B}:82/audio`;
+$('board').value = B;
+$('bf').onsubmit = e => { e.preventDefault(); const h = $('board').value.trim(); if (h) location.search = `?board=${encodeURIComponent(h)}`; };
+
+// --- видео ---
+let videoOn = true;
+const startVideo = () => { $('video').src = streamUrl + '?t=' + Date.now(); };
+$('vbtn').onclick = () => {
+  videoOn = !videoOn;
+  if (videoOn) startVideo(); else $('video').src = '';
+  $('vbtn').textContent = 'Видео: ' + (videoOn ? 'идёт' : 'остановлено');
+  $('vbtn').classList.toggle('on', videoOn);
+};
+const ctl = (k, v) => fetch(`${api}/api/control?${k}=${v}`);
+$('fs').onchange = e => ctl('framesize', e.target.value);
+$('vflip').onchange = e => ctl('vflip', +e.target.checked);
+$('hmirror').onchange = e => ctl('hmirror', +e.target.checked);
+startVideo();
+
+// --- звук: сырой PCM 16 кГц через fetch, проигрывание через Web Audio ---
+let actx, gainNode, abort;
+$('gain').oninput = e => { $('gainv').textContent = '×' + e.target.value; if (gainNode) gainNode.gain.value = +e.target.value; };
+async function startAudio() {
+  actx = actx || new AudioContext();
+  await actx.resume();
+  gainNode = actx.createGain(); gainNode.gain.value = +$('gain').value; gainNode.connect(actx.destination);
+  abort = new AbortController();
+  const r = await fetch(audioUrl, {signal: abort.signal});
+  const rd = r.body.getReader();
+  let t = 0, rest = new Uint8Array(0);
+  for (;;) {
+    const {value, done} = await rd.read();
+    if (done) break;
+    const all = new Uint8Array(rest.length + value.length); all.set(rest); all.set(value, rest.length);
+    const n = all.length >> 1; rest = all.slice(n * 2);
+    if (!n) continue;
+    const pcm = new Int16Array(all.slice(0, n * 2).buffer);
+    const b = actx.createBuffer(1, n, 16000), ch = b.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = pcm[i] / 32768;
+    const src = actx.createBufferSource(); src.buffer = b; src.connect(gainNode);
+    const now = actx.currentTime;
+    if (t < now + 0.05 || t > now + 1) t = now + 0.3;  // догнать или сбросить накопившуюся задержку
+    src.start(t); t += n / 16000;
+  }
+}
+let audioOn = false;
+$('abtn').onclick = () => {
+  audioOn = !audioOn;
+  $('abtn').textContent = 'Звук: ' + (audioOn ? 'включён' : 'выключен');
+  $('abtn').classList.toggle('on', audioOn);
+  if (audioOn) startAudio().catch(e => { if (audioOn) $('abtn').textContent = 'Звук: ошибка ' + e.message; });
+  else { abort && abort.abort(); gainNode && gainNode.disconnect(); }
+};
+
+// --- состояние ---
+const rssiText = r => r === 0 ? '—' : `${r} dBm (${r > -60 ? 'хорошо' : r > -75 ? 'средне' : 'слабо'})`;
+const esc = v => String(v).replace(/[&<]/g, c => c === '&' ? '&amp;' : '&lt;');
+async function poll() {
+  try {
+    const s = await (await fetch(`${api}/api/status`, {signal: AbortSignal.timeout(3000)})).json();
+    $('link').textContent = 'Связь: есть';
+    const rows = [
+      ['Wi-Fi', s.mode + (s.ssid ? ', ' + s.ssid : '')], ['IP', s.ip], ['Сигнал', rssiText(s.rssi)], ['MAC', s.mac],
+      ['Камера', s.cam], ['Микрофон', s.mic], ['microSD', s.sd],
+      ['PSRAM', `${s.psram} КБ, свободно ${s.psram_free} КБ`], ['ОЗУ свободно', s.heap_free + ' КБ'],
+      ['Температура чипа', s.temp + ' °C'], ['Работает', s.uptime + ' с'],
+    ];
+    $('st').innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('');
+    $('fps').textContent = videoOn ? s.fps + ' кадр/с' : '';
+    const pct = Math.round(Math.min(100, Math.sqrt(s.mic_peak / 32767) * 100));
+    $('lvl').value = pct; $('lvlv').textContent = pct + ' %';
+    if (document.activeElement !== $('fs')) $('fs').value = s.framesize;
+    $('vflip').checked = !!s.vflip; $('hmirror').checked = !!s.hmirror;
+  } catch (e) {
+    $('link').textContent = `Связь: нет ответа от ${B}`;
+  }
+  setTimeout(poll, 1000);
+}
+poll();
+
+// --- Wi-Fi платы ---
+$('scan').onclick = async () => {
+  $('scanst').textContent = 'ищу…'; $('nets').innerHTML = '';
+  try {
+    const nets = await (await fetch(`${api}/api/scan`)).json();
+    nets.sort((a, b) => b.rssi - a.rssi);
+    $('scanst').textContent = `найдено: ${nets.length}`;
+    for (const n of nets) {
+      const d = document.createElement('div');
+      d.textContent = `${n.ssid || '(скрытая)'} — ${n.rssi} dBm${n.open ? ', открытая' : ''}`;
+      d.onclick = () => { $('ssid').value = n.ssid; $('pass').focus(); };
+      $('nets').append(d);
+    }
+  } catch { $('scanst').textContent = 'ошибка: плата не ответила'; }
+};
+$('wf').onsubmit = async e => {
+  e.preventDefault();
+  const body = new URLSearchParams({ssid: $('ssid').value, pass: $('pass').value});
+  await fetch(`${api}/api/wifi`, {method: 'POST', body}).catch(() => {});
+  $('wmsg').textContent = 'Сохранено, плата перезагружается. Подключите ПК к той же сети и укажите плату edog-xiao.local';
+};
+</script></body></html>

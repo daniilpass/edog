@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Деплой прошивки с ПК на Raspberry Pi: только firmware/ (без venv, тестов, калибровки).
+# Деплой прошивки с ПК на Raspberry Pi: только rpi/firmware/ (без venv, тестов, калибровки).
+# На Pi она лежит в ~/edog/firmware — в архиве пути firmware/…, раскладка на Pi не зависит от репозитория.
 # На Pi работает только API. Портал (ui/) и 3D-модели (cad/web/) остаются на ПК, см. ui/serve.py.
-# Запуск на ПК (Git Bash):  firmware/os/deploy.sh [ssh-хост]     (по умолчанию алиас edog из ~/.ssh/config)
+# Запуск на ПК (Git Bash):  rpi/firmware/os/deploy.sh [ssh-хост]     (по умолчанию алиас edog из ~/.ssh/config)
 # Берёт текущие файлы рабочей копии, включая незакоммиченные.
 set -euo pipefail
 
 HOST="${1:-edog}"
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RPI="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # rpi/
 REMOTE_DIR="edog"
 
-cd "$REPO"
+cd "$RPI"
 echo "==> упаковка"
 tar -czf - \
   --exclude='firmware/.venv' --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \

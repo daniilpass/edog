@@ -12,8 +12,11 @@ cad/
   custom/        — финальные STL для печати (описание — cad/custom/README.md)
     tests/         — тестовые вставки для проверки посадок
   web/           — облегчённые модели и manifest.json для 3D в веб-портале (выгружает export_web_models.py)
-firmware/      — сервис для Raspberry Pi: серво, геймпад, API (см. firmware/README.md)
-ui/            — веб-портал с 3D-моделью, запускается на ПК: python ui/serve.py
+ui/            — общий веб-портал с 3D-моделью (для RPi и XIAO), запускается на ПК: start.cmd или python ui/serve.py
+rpi/           — всё для Raspberry Pi
+  firmware/      — сервис: серво, геймпад, API (см. rpi/firmware/README.md); на Pi лежит в ~/edog/firmware
+  tools/         — консольные утилиты для собаки
+xiao/          — всё для XIAO ESP32-S3 Sense: прошивка, страница проверки камеры и микрофона (см. xiao/README.md)
 docs/          — обсуждение идей, решения, заметки по железу
 ```
 

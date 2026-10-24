@@ -53,7 +53,7 @@ ssh edog '~/edog/firmware/os/check.sh'
 
 Git-репозитория и исходников CAD на Pi нет, и так и должно оставаться: место на SD ограничено. Деплой делается с ПК:
 ```bash
-/c/git/edog/firmware/os/deploy.sh
+/c/git/edog/rpi/firmware/os/deploy.sh
 ```
 Скрипт берёт текущие файлы рабочей копии (включая незакоммиченные) и отправляет их по SSH одним архивом меньше 1 МБ. На Pi он целиком заменяет `firmware/edog`, затем перезапускает сервис и проверяет, что тот поднялся.
 
@@ -61,7 +61,7 @@ Git-репозитория и исходников CAD на Pi нет, и так
 
 На Pi скрипт не трогает:
 - `.venv`;
-- `firmware/config/calibration.json`: калибровка серво живёт только на Pi. Если её нужно сохранить в репозиторий, забери её через `scp edog:edog/firmware/config/calibration.json /c/git/edog/firmware/config/`.
+- `firmware/config/calibration.json`: калибровка серво живёт только на Pi. Если её нужно сохранить в репозиторий, забери её через `scp edog:edog/firmware/config/calibration.json /c/git/edog/rpi/firmware/config/`.
 
 Если менялся `requirements.txt` или `setup.sh`, после деплоя запусти:
 ```bash
@@ -70,7 +70,7 @@ ssh edog 'sudo -n env DEBIAN_FRONTEND=noninteractive ~/edog/firmware/os/setup.sh
 
 **API:** http://192.168.50.129:8080/ (Swagger: `/docs`).
 
-**Портал** запускается на ПК: `python ui/serve.py`, затем открыть http://localhost:8000/?dog=192.168.50.129:8080.
+**Портал** запускается на ПК: `python ui/serve.py` (или `start.cmd` в корне), затем открыть http://localhost:8000/?dog=192.168.50.129:8080.
 
 ## Питание
 

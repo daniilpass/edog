@@ -1,11 +1,11 @@
 """Демо EDOG из консоли — то же, что кнопка «Демо» в портале: ноги по кругу шагают в воздухе.
 
-    python tools/dance.py                         # собака 192.168.50.129:8080, по 4 цикла шага, 3 круга
-    python tools/dance.py --dog 127.0.0.1:8080    # локальный сервис с --mock
-    python tools/dance.py --cycles 6 --laps 1
-    python tools/dance.py --gait wide             # профиль шага из [gaits] (выбирается и для ходьбы)
+    python rpi/tools/dance.py                         # собака 192.168.50.129:8080, по 4 цикла шага, 3 круга
+    python rpi/tools/dance.py --dog 127.0.0.1:8080    # локальный сервис с --mock
+    python rpi/tools/dance.py --cycles 6 --laps 1
+    python rpi/tools/dance.py --gait wide             # профиль шага из [gaits] (выбирается и для ходьбы)
 
-Демо идёт на собаке (firmware/edog/demo.py), сколько ног сразу — по лимиту тока:
+Демо идёт на собаке (rpi/firmware/edog/demo.py), сколько ног сразу — по лимиту тока:
 2–3 серво — по одной ноге, 4–7 — диагональными парами, от 8 или без лимита — все ноги.
 Ctrl+C — остановить: сигнал с серво снимается.
 """

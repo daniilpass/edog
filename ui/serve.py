@@ -1,6 +1,6 @@
 """Локальный сервер портала EDOG: отдаёт ui/ и 3D-модели из cad/web/ по адресу /models/.
 
-Собака (Raspberry Pi) отдаёт только API, портал запускается на ПК:
+Плата собаки (Raspberry Pi, XIAO) отдаёт только API, портал запускается на ПК:
     python ui/serve.py              → http://localhost:8000/
     python ui/serve.py --lan        → доступен и с телефона в той же сети
     python ui/serve.py --port 9000
