@@ -330,7 +330,8 @@ static esp_err_t bluetooth(httpd_req_t *req, const std::string &path) {
 // ---------- прошивка по воздуху ----------
 // Тело — файл .bin как есть (arduino-cli compile --export-binaries → edog.ino.bin). Пишется во второй
 // слот прошивки; плата переключается на него, только если запись прошла целиком и образ цел, иначе
-// остаётся старая прошивка. Только при выключенных серво: на перезагрузке контур не держит ноги.
+// остаётся старая прошивка. На перезагрузке контур не держит ноги, поэтому включённые серво сначала
+// выключаются, как при деплое на Pi: собака встаёт в монтажное положение, потом сигнал снимается.
 
 static void restart_task(void *) {
   delay(500);   // ответ успеть отправить
@@ -340,9 +341,17 @@ static void restart_task(void *) {
 static esp_err_t firmware_handler(httpd_req_t *req) {
   {
     RobotLock lock;
-    if (robot->enabled) return send_error(req, HttpError{409, "обновление прошивки: сначала выключите серво"});
     if (robot->updating) return send_error(req, HttpError{409, "обновление прошивки уже идёт"});
-    robot->updating = true;
+    robot->updating = true;   // заодно не даёт включить серво до перезагрузки
+    if (robot->enabled) robot->set_enabled(false);
+  }
+  // Тело ждёт в сокете, пока собака встаёт: выключение укладывается в POWER_DOWN_TIMEOUT_S.
+  for (;;) {
+    {
+      RobotLock lock;
+      if (!robot->enabled) break;
+    }
+    delay(50);
   }
   auto fail = [&](int code, const std::string &detail) {
     Update.abort();

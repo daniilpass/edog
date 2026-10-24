@@ -333,6 +333,7 @@ void Robot::next_move_step() {
 // снимается сигнал — иначе без удержания серво собака падает под своим весом. В ручном режиме —
 // сразу. Включение — из монтажного положения плавно в стойку.
 void Robot::set_enabled(bool on) {
+  if (on && updating) throw ValueError("идёт обновление прошивки: серво не включаются");
   stop_demo();
   if (on && !std::isnan(powering_down_)) {
     powering_down_ = NAN;   // повторное включение отменяет выключение

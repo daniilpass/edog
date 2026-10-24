@@ -199,6 +199,9 @@ static std::string connect_pad(const NimBLEAddress &addr, std::string name) {
   }
   if (client->isConnected()) client->disconnect();
   client->setConnectTimeout(4000);
+  // Интервал 7.5–15 мс (как у Linux на Pi). По умолчанию NimBLE держит 30–50 мс и на просьбу
+  // геймпада ускориться подставляет их же — отчёты копятся в геймпаде, стик отзывается с лагом.
+  client->setConnectionParams(6, 12, 0, 200);
   if (!client->connect(addr)) return "нет ответа";
   if (!client->secureConnection()) {
     client->disconnect();
@@ -249,7 +252,8 @@ static std::string connect_pad(const NimBLEAddress &addr, std::string name) {
     robot->gamepad.name = name;
   }
   pad_ready = true;
-  Serial.printf("геймпад подключён: %s (%s), полей HID: %u\n", name.c_str(), mac.c_str(), (unsigned)hid.fields());
+  Serial.printf("геймпад подключён: %s (%s), полей HID: %u, интервал %.2f мс\n", name.c_str(), mac.c_str(),
+                (unsigned)hid.fields(), client->getConnInfo().getConnInterval() * 1.25);
   return "";
 }
 

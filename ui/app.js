@@ -319,10 +319,7 @@ function setupFirmware() {
   if (!config.firmware) return;
   $('fw-card').hidden = false;
   $('fw-id').textContent = `Сейчас: ${config.firmware}`;
-  $('fw-load').onclick = () => {
-    if (state?.enabled) { toast('Обновление прошивки: сначала выключите серво', 'error'); return; }
-    $('fw-file').click();
-  };
+  $('fw-load').onclick = () => $('fw-file').click();
   $('fw-file').onchange = e => {
     const file = e.target.files[0];
     e.target.value = '';
