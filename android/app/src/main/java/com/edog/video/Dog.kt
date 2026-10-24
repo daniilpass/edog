@@ -47,8 +47,9 @@ class Dog(context: Context, address: String) {
         request("POST", "/api/camera/take", JSONObject().put("id", id))
     }
 
-    // Читает поток, пока его не закроют; true — хотя бы один кадр пришёл.
-    fun stream(id: Long, onFrame: (Bitmap) -> Unit): Boolean {
+    // Читает поток, пока его не закроют; true — хотя бы один кадр пришёл. headers — заголовки кадра
+    // (ключи в нижнем регистре): X-Detect, X-Free, X-Vision, X-Patrol, X-Map — что увидело зрение собаки.
+    fun stream(id: Long, onFrame: (Bitmap, Map<String, String>) -> Unit): Boolean {
         val c = open("$streamUrl?id=$id")
         conn = c
         var got = false
@@ -59,14 +60,17 @@ class Dog(context: Context, address: String) {
             val input = DataInputStream(c.inputStream.buffered(64 * 1024))
             while (true) {
                 var length = -1
+                val headers = HashMap<String, String>()
                 while (true) {
                     val line = readLine(input) ?: return got
                     if (line.isEmpty()) { if (length >= 0) break else continue }
+                    val colon = line.indexOf(':')
+                    if (colon > 0) headers[line.substring(0, colon).trim().lowercase()] = line.substring(colon + 1).trim()
                     if (line.startsWith("Content-Length:", ignoreCase = true)) length = line.substringAfter(':').trim().toInt()
                 }
                 val jpeg = ByteArray(length)
                 input.readFully(jpeg)
-                BitmapFactory.decodeByteArray(jpeg, 0, length)?.let { onFrame(it); got = true }
+                BitmapFactory.decodeByteArray(jpeg, 0, length)?.let { onFrame(it, headers); got = true }
             }
         } catch (e: IOException) {
             if (got) return true   // поток оборвался или закрыт: забрали, собака перезагрузилась

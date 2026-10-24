@@ -6,6 +6,7 @@
 #include <map>
 
 #include "hid.h"
+#include "patrol.h"
 
 // ---------- раскладка (как gamepad.py) ----------
 
@@ -71,6 +72,8 @@ static void action(const std::string &a) {
       r.next_gait();
     } else if (a == "estop") {
       r.estop();
+    } else if (a == "patrol") {
+      patrol_toggle();
     } else {
       Serial.printf("неизвестное действие геймпада: %s\n", a.c_str());
     }
@@ -81,6 +84,7 @@ static void action(const std::string &a) {
 
 static void button_down(const std::string &name) {
   robot->gamepad.last_button = name;
+  robot->pad_presses++;
   if (const char *a = lookup(GAMEPAD_BUTTONS, std::size(GAMEPAD_BUTTONS), name)) action(a);
 }
 
@@ -88,6 +92,7 @@ static void dpad(const char *side) {
   std::string name = std::string("DPAD_") + side;
   for (char &c : name) c = toupper(c);
   robot->gamepad.last_button = name;
+  robot->pad_presses++;
   if (const char *a = lookup(GAMEPAD_DPAD, std::size(GAMEPAD_DPAD), side)) action(a);
 }
 

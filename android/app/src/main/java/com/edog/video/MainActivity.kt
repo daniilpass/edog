@@ -3,6 +3,7 @@ package com.edog.video
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -22,10 +23,11 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
-// Видео с камеры собаки на весь экран. Поток у собаки один: если его смотрит другое устройство
+// Видео с камеры собаки и радар (карта вокруг неё) — что видит собака в патруле. Поток у собаки один: если его смотрит другое устройство
 // (портал, другой телефон), приложение спрашивает, переключить ли видео сюда.
 class MainActivity : Activity() {
     private lateinit var video: MjpegView
+    private lateinit var radar: RadarView
     private lateinit var message: TextView
     private lateinit var take: Button
     private lateinit var info: TextView
@@ -91,10 +93,24 @@ class MainActivity : Activity() {
             }
             insets
         }
+        // Радар — рядом с видео: в портретной ориентации под ним, в альбомной справа. Пока собака не прислала
+        // карту (старая прошивка), его нет.
+        radar = RadarView(this).apply { visibility = View.GONE }
+        val portrait = resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
+        val content = LinearLayout(this).apply {
+            orientation = if (portrait) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            addView(FrameLayout(this@MainActivity).apply {
+                addView(video, FrameLayout.LayoutParams(-1, -1))
+                addView(overlay, FrameLayout.LayoutParams(-1, -1))
+            }, LinearLayout.LayoutParams(if (portrait) -1 else 0, if (portrait) 0 else -1, 1.6f))
+            addView(radar, LinearLayout.LayoutParams(if (portrait) -1 else 0, if (portrait) 0 else -1, 1f).apply {
+                val m = (8 * dp).toInt()
+                setMargins(m, m, m, m)
+            })
+        }
         setContentView(FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
-            addView(video, FrameLayout.LayoutParams(-1, -1))
-            addView(overlay, FrameLayout.LayoutParams(-1, -1))
+            addView(content, FrameLayout.LayoutParams(-1, -1))
         })
         hideSystemBars()
     }
@@ -174,7 +190,15 @@ class MainActivity : Activity() {
                 val viewer = d.viewer()
                 if (viewer != 0L && viewer != myId && !askTake(d, watched)) return
                 ui { status("Подключение к видео…"); info.text = d.label }
-                watched = d.stream(myId) { bmp -> ui { status(""); video.show(bmp) } }
+                watched = d.stream(myId) { bmp, headers ->
+                    val v = Vision(headers)
+                    ui {
+                        status("")
+                        video.show(bmp, v)
+                        radar.show(v)
+                        radar.visibility = if (v.hasMap) View.VISIBLE else View.GONE
+                    }
+                }
             } catch (_: BusyException) {
                 // поток только что забрал другой зритель: решит следующий опрос состояния
             } catch (_: InterruptedException) {

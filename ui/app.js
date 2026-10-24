@@ -4,10 +4,11 @@ const $ = id => document.getElementById(id);
 const LEG_NAMES = { FL: 'перед. левая', FR: 'перед. правая', RL: 'задн. левая', RR: 'задн. правая' };
 const JOINT_NAMES = { hip: 'бедро', knee: 'колено' };
 const POSE_NAMES = { stand: 'Стойка', sit: 'Сидеть', lie: 'Лечь', high: 'Высоко', mount: 'Монтаж', load: 'Под нагрузкой' };
-const MOVE_NAMES = { jump: 'Прыжок', joy: 'Радость' };
+const MOVE_NAMES = { jump: 'Прыжок', joy: 'Радость', nod: 'Кивок', wag: 'Виляние', bow: 'Поклон' };
 const DPAD_LABELS = { up: 'крестовина ↑', down: 'крестовина ↓', left: 'крестовина ←', right: 'крестовина →' };
 const ACTION_NAMES = {
   stand: 'стойка', sit: 'сидеть', lie: 'лечь', high: 'высоко', mount: 'монтаж', load: 'под нагрузкой', jump: 'прыжок', joy: 'радость',
+  nod: 'кивок', wag: 'виляние', bow: 'поклон', patrol: 'патруль вкл/выкл',
   torque_toggle: 'серво вкл/выкл', estop: 'аварийный стоп', next_gait: 'следующий профиль шага',
   roll_left: 'крен −1° (до выключения)', roll_right: 'крен +1° (до выключения)',
 };
@@ -188,11 +189,14 @@ function render(s) {
   }
   if (s.roll_offset) $('o-roll').textContent += ` · бамперы ${s.roll_offset > 0 ? '+' : ''}${s.roll_offset.toFixed(0)}°`;
   const d = s.drive;
-  $('drive-info').textContent = `vx ${d.vx.toFixed(2)} · поворот ${d.turn.toFixed(2)} · ${d.source === 'web' ? 'портал' : 'геймпад'}`;
+  $('drive-info').textContent = `vx ${d.vx.toFixed(2)} · поворот ${d.turn.toFixed(2)} · ${{ web: 'портал', patrol: 'патруль' }[d.source] ?? 'геймпад'}`;
   $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', manual: 'ручной', demo: 'демо' }[s.mode]}`;
   renderDemo(s);
   renderGait(s.gait);
   renderCamera(s);
+  renderPatrol(s.patrol);
+  renderVision(s.vision);
+  drawRadar(s.patrol);
 
   renderPower(s.power);
   renderTrim(s.trim);
@@ -224,20 +228,89 @@ function render(s) {
 // Wi-Fi пропал): если зрителей нет, а картинка должна идти, — переподключаемся.
 
 const CAM_KEY = 'edog.camera';
+const OVERLAY_KEY = 'edog.overlay';
 const camId = 1 + Math.floor(Math.random() * 0x7fffffff);
 // wait — решить по следующему состоянию, watch — смотрим, ask — занято другим, off — выключено
 let camUrl = null, camStarted = 0, camMode = 'off';
+let camAbort = null, camFrame = null, camHeaders = {}, camPicking = false;
+const PATROL_NAMES = {
+  off: 'патруль выключен', countdown: 'старт через', start: 'кивок — начинаю', paused: 'пауза: управляет человек',
+  walk: 'иду', scan: 'осматриваюсь', turn: 'поворачиваю', approach: 'человек — подхожу', greet: 'приветствую',
+  leave: 'ухожу дальше', backup: 'отхожу назад',
+};
+
+// Поток MJPEG читается через fetch, а не <img>: у каждого кадра свои заголовки X-Detect, X-Free, X-Vision,
+// X-Patrol — что увидело зрение. Кадр рисуется на холсте, разметка — поверх.
+const CRLF2 = [13, 10, 13, 10];
+function findSeq(buf, seq, from = 0) {
+  outer: for (let i = from; i <= buf.length - seq.length; i++) {
+    for (let j = 0; j < seq.length; j++) if (buf[i + j] !== seq[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+async function camRead(url) {
+  const ctrl = new AbortController();
+  camAbort = ctrl;
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    const reader = r.body.getReader();
+    let buf = new Uint8Array(0);
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const next = new Uint8Array(buf.length + value.length);
+      next.set(buf);
+      next.set(value, buf.length);
+      buf = next;
+      for (;;) {
+        const end = findSeq(buf, CRLF2);
+        if (end < 0) break;
+        const head = new TextDecoder().decode(buf.subarray(0, end));
+        const headers = {};
+        for (const line of head.split('\r\n')) {
+          const k = line.indexOf(':');
+          if (k > 0) headers[line.slice(0, k).trim().toLowerCase()] = line.slice(k + 1).trim();
+        }
+        const len = Number(headers['content-length']);
+        if (!Number.isFinite(len)) { buf = buf.subarray(end + 4); continue; }
+        if (buf.length < end + 4 + len) break;
+        const jpeg = buf.slice(end + 4, end + 4 + len);
+        buf = buf.slice(end + 4 + len);
+        createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' })).then(bmp => {
+          camFrame?.close();
+          camFrame = bmp;
+          camHeaders = headers;
+          drawCam();
+          if ($('cam-msg').textContent.startsWith('подключение')) $('cam-msg').textContent = '';
+        }).catch(() => { /* битый кадр */ });
+      }
+    }
+  } catch { /* закрыли сами, забрали или оборвалось */ }
+  if (camAbort !== ctrl || camMode !== 'watch') return;
+  camMode = 'wait';
+  camStarted = Date.now();
+  $('cam-msg').textContent = '⚠ Нет видео · переподключение…';
+}
 
 function camStart() {
   camMode = 'watch';
   camStarted = Date.now();
   $('cam-ask').hidden = true;
-  $('cam-img').src = `${camUrl}?id=${camId}&t=${camStarted}`;
+  camAbort?.abort();
   $('cam-msg').textContent = 'подключение к видео…';
+  camRead(`${camUrl}?id=${camId}&t=${camStarted}`);
 }
 
 function camStop(msg) {
-  $('cam-img').removeAttribute('src');
+  camAbort?.abort();
+  camAbort = null;
+  camFrame?.close();
+  camFrame = null;
+  const c = $('cam-canvas');
+  c.getContext('2d').clearRect(0, 0, c.width, c.height);
   $('cam-msg').textContent = msg;
 }
 
@@ -255,6 +328,90 @@ async function camTake() {
     camStart();
   } catch { /* ошибку показал api() */ }
   $('cam-take').disabled = false;
+}
+
+// Строка кадра 640×480, на которой лежит точка пола на расстоянии mm (геометрия камеры из состояния собаки).
+function floorRow(mm) {
+  const fl = state?.vision?.floor;
+  if (!fl) return null;
+  const f = 320 / Math.tan((state.patrol?.map?.fov_deg ?? 56) / 2 * Math.PI / 180);
+  const a = Math.atan(fl.height_mm / mm) - fl.tilt_deg * Math.PI / 180;
+  return 240 + f * Math.tan(a);
+}
+
+const metres = cm => cm < 0 ? '?' : cm >= 300 ? 'далеко' : `${(cm / 100).toFixed(1).replace('.', ',')} м`;
+
+// Подпись с подложкой: читается на любом фоне, не полагаясь на цвет.
+function label(ctx, text, x, y) {
+  ctx.font = '600 15px system-ui, sans-serif';
+  const w = ctx.measureText(text).width + 10;
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(x, y - 18, w, 22);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(text, x + 5, y - 2);
+}
+
+function drawCam() {
+  const c = $('cam-canvas'), ctx = c.getContext('2d');
+  if (!camFrame) return;
+  ctx.drawImage(camFrame, 0, 0, c.width, c.height);
+  if (!$('cam-overlay').checked) return;
+  const h = camHeaders;
+  // граница свободного пола по 16 полосам — пунктир
+  const free = (h['x-free'] ?? '').split(',').filter(Boolean).map(Number);
+  if (free.length === 16) {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffd400';
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    let started = false;
+    free.forEach((cm, i) => {
+      if (cm < 0) { started = false; return; }
+      const y = Math.min(479, floorRow(cm * 10) ?? 479);
+      const x0 = i * 40, x1 = x0 + 40;
+      if (!started) ctx.moveTo(x0, y); else ctx.lineTo(x0, y);
+      ctx.lineTo(x1, y);
+      started = true;
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const i of [1, 5, 10, 14]) {
+      if (free[i] < 0) continue;
+      const y = Math.min(470, floorRow(free[i] * 10) ?? 470);
+      label(ctx, metres(free[i]), i * 40 - 6, y - 6);
+    }
+  }
+  // люди — сплошная рамка с подписью
+  for (const item of (h['x-detect'] ?? '').split(';').filter(Boolean)) {
+    const [x1, y1, x2, y2, score, cm] = item.split(',').map(Number);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    label(ctx, `человек ${score}% · ${cm < 0 ? 'расстояние ?' : metres(cm)}`, x1, Math.max(22, y1));
+  }
+  // состояние патруля и закрытость кадра
+  const kv = text => Object.fromEntries((text ?? '').split(';').filter(Boolean).map(p => p.split('=')));
+  const patrol = kv(h['x-patrol']), vis = kv(h['x-vision']);
+  const lines = [];
+  if (patrol.state) lines.push(PATROL_NAMES[patrol.state] + (patrol.left ? ` ${patrol.left} с` : ''));
+  if (vis.close) lines.push(`близко: ${Number(vis.close).toFixed(2)}${Number(vis.close) > 0.7 ? ' — почти упёрлась' : ''}`);
+  if (vis.age && Number(vis.age) > 1500) lines.push(`анализ ${(Number(vis.age) / 1000).toFixed(1)} с назад`);
+  lines.forEach((t, i) => label(ctx, t, 8, 26 + i * 26));
+  if (camPicking) label(ctx, `кликните по низу предмета на ${$('vis-floor-mm').value} мм`, 8, 470);
+}
+
+// Клик по видео в режиме калибровки пола: строка кадра 640×480 с учётом полей (object-fit: contain).
+function camClick(e) {
+  if (!camPicking) return;
+  const c = $('cam-canvas'), r = c.getBoundingClientRect();
+  const k = Math.min(r.width / c.width, r.height / c.height);
+  const y = (e.clientY - r.top - (r.height - c.height * k) / 2) / k;
+  camPicking = false;
+  c.classList.remove('picking');
+  $('vis-floor-pick').classList.remove('active');
+  if (y < 0 || y >= 480) return;
+  api('POST', '/api/vision/floor_point', { y: Math.round(y), mm: Number($('vis-floor-mm').value) })
+    .then(s => toast(`Точка записана: камера ${s.vision.floor.height_mm} мм над полом, наклон ${s.vision.floor.tilt_deg}°`));
 }
 
 function setupCamera() {
@@ -284,13 +441,14 @@ function setupCamera() {
     try { localStorage.setItem(CAM_KEY, box.checked ? '1' : '0'); } catch { /* без хранилища */ }
     apply();
   };
-  $('cam-take').onclick = camTake;
-  $('cam-img').onerror = () => {
-    if (camMode !== 'watch') return;
-    camMode = 'wait';
-    camStarted = Date.now();
-    $('cam-msg').textContent = '⚠ Нет видео · переподключение…';
+  const overlay = $('cam-overlay');
+  try { overlay.checked = localStorage.getItem(OVERLAY_KEY) !== '0'; } catch { overlay.checked = true; }
+  overlay.onchange = () => {
+    try { localStorage.setItem(OVERLAY_KEY, overlay.checked ? '1' : '0'); } catch { /* без хранилища */ }
+    drawCam();
   };
+  $('cam-take').onclick = camTake;
+  $('cam-canvas').onclick = camClick;
   apply();
 }
 
@@ -305,11 +463,181 @@ function renderCamera(s) {
   } else if (camMode === 'ask' && !viewer) {
     camStart();   // другое устройство отключилось — поток свободен
   } else if (camMode === 'watch') {
-    if (s.camera.fps > 0 && $('cam-msg').textContent.startsWith('подключение')) $('cam-msg').textContent = '';
     if (!s.camera.clients && Date.now() - camStarted > 4000) camStart();
   }
   const status = { watch: `${s.camera.fps} кадр/с из ${cam.fps}`, ask: 'на другом устройстве', off: 'выключено', wait: 'подключение' }[camMode];
   $('cam-info').textContent = `${cam.sensor} · ${status} · ${camUrl}`;
+}
+
+// ---------- патруль, зрение, радар ----------
+
+function setupPatrol() {
+  if (!config.camera?.ok) return;
+  $('patrol-card').hidden = $('vision-card').hidden = $('radar-card').hidden = false;
+  $('patrol-toggle').onclick = () => api('POST', '/api/patrol', { action: state?.patrol?.state === 'off' ? 'start' : 'stop' });
+  $('patrol-auto').onchange = e => api('PATCH', '/api/patrol', { autostart: e.target.checked })
+    .then(() => toast(e.target.checked ? 'Патруль начнётся сам после включения питания' : 'Авто-старт патруля выключен'));
+  $('vis-phase-scan').onclick = () => api('POST', '/api/vision/phase_scan', { seconds: 20 })
+    .then(() => toast('Подбор фазы: 20 с — пусть собака идёт вперёд'));
+  $('vis-floor-pick').onclick = () => {
+    camPicking = !camPicking;
+    $('cam-canvas').classList.toggle('picking', camPicking);
+    $('vis-floor-pick').classList.toggle('active', camPicking);
+    if (camPicking) toast('Кликните на видео по низу предмета, где он касается пола');
+    drawCam();
+  };
+  $('vis-apply').onclick = () => api('PATCH', '/api/vision', { height_mm: Number($('vis-h').value), tilt_deg: Number($('vis-tilt').value) })
+    .then(() => toast('Высота и наклон камеры применены'));
+  $('vis-floor-reset').onclick = () => api('POST', '/api/vision/floor_reset').then(() => toast('Калибровка пола сброшена'));
+}
+
+function renderPatrol(p) {
+  if (!p) return;
+  const on = p.state !== 'off';
+  $('patrol-toggle').textContent = on ? 'Остановить патруль' : 'Запустить патруль';
+  $('patrol-toggle').classList.toggle('primary', !on);
+  if (document.activeElement !== $('patrol-auto')) $('patrol-auto').checked = p.autostart;
+  $('patrol-state').textContent = (on ? 'Патруль: ' : '') + (PATROL_NAMES[p.state] ?? p.state)
+    + (p.left_s !== undefined ? ` ${p.left_s} с` : '') + (p.wall ? ' · вдоль стены' : '');
+  $('patrol-info').textContent = [
+    !on && p.reason && `причина: ${p.reason}`,
+    `приветствий ${p.greetings} · осмотров ${p.scans} · упиралась ${p.stucks}`,
+    p.ignore_s && `людей не замечает ещё ${p.ignore_s} с`,
+    `курс ${p.heading_deg}° · разворот ~${p.turn_dps}°/с`,
+  ].filter(Boolean).join(' · ');
+}
+
+function renderVision(v) {
+  if (!v) return;
+  $('vis-info').textContent = v.active
+    ? `распаковка ${v.ms.decode} мс · люди ${v.ms.detect} мс · пол ${v.ms.analyze} мс · ${v.rate} анализов/с · `
+      + `плата ${v.temp_c}°C · свободно ${v.heap_kb} КБ${v.model ? '' : ' · ⚠ модель людей не загружена'}`
+    : `зрение спит: видео никто не смотрит и патруль выключен · плата ${v.temp_c}°C`;
+  const ph = v.phase;
+  $('vis-phase').textContent = `фаза ${ph.target.toFixed(3)}${ph.both ? ' и +0,5' : ''} · разброс ${ph.jitter_ms} мс`
+    + ` · кадров на ходу ${ph.synced_rate}/с`;
+  const sc = ph.scan;
+  const bins = sc.bins.map((b, i) => b === null ? null : `${(i / 16 + 1 / 32).toFixed(2)}: ${b}`).filter(Boolean);
+  $('vis-phase-scan-info').textContent = sc.active ? `идёт подбор: осталось ${sc.left_s} с — собака должна идти`
+    : sc.best !== undefined ? `выбрана ${sc.best.toFixed(3)} · разница по фазам ${bins.join(', ')}` : '';
+  $('vis-phase-scan').disabled = sc.active;
+  const fl = v.floor;
+  $('vis-floor').textContent = `камера ${fl.height_mm} мм над полом, наклон ${fl.tilt_deg}° · ближе ${(fl.blind_mm / 10).toFixed(0)} см пол не виден`
+    + ` · точек калибровки ${fl.points?.length ?? 0}${fl.model ? '' : ' · пол ещё не распознан'}`;
+  for (const [id, val] of [['vis-h', fl.height_mm], ['vis-tilt', fl.tilt_deg]])
+    if (document.activeElement !== $(id)) $(id).value = val;
+}
+
+// Радар: вид сверху, собака в центре, нос вверх, по часовой — вправо. Радиус — 3 м.
+function drawRadar(p) {
+  const c = $('radar');
+  if (!p || c.closest('[hidden]')) return;
+  const css = getComputedStyle(document.documentElement);
+  const fg = css.getPropertyValue('--text').trim(), muted = css.getPropertyValue('--muted').trim();
+  const accent = css.getPropertyValue('--accent').trim();
+  const dpr = window.devicePixelRatio || 1, size = c.clientWidth;
+  if (!size) return;
+  if (c.width !== Math.round(size * dpr)) c.width = c.height = Math.round(size * dpr);
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, size, size);
+  const cx = size / 2, cy = size / 2, R = size / 2 - 18, M = 300;   // см на краю
+  const pt = (deg, cm) => {
+    const a = deg * Math.PI / 180, r = Math.min(cm, M) / M * R;
+    return [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+  };
+  // кольца
+  ctx.strokeStyle = muted;
+  ctx.fillStyle = muted;
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.lineWidth = 1;
+  for (const cm of [50, 100, 200, 300]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, cm / M * R, 0, 2 * Math.PI);
+    ctx.globalAlpha = 0.4;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillText(`${cm / 100} м`.replace('.', ','), cx + 3, cy - cm / M * R + 12);
+  }
+  // сектора: длина — свободно, прозрачность — давность, неизвестные — штриховка и «?»
+  const map = p.map, step = 360 / map.cm.length;
+  map.cm.forEach((cm, i) => {
+    const a0 = (i * step - step / 2 - 90) * Math.PI / 180, a1 = (i * step + step / 2 - 90) * Math.PI / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    if (cm < 0) {
+      ctx.arc(cx, cy, R * 0.35, a0, a1);
+      ctx.closePath();
+      ctx.save();
+      ctx.clip();
+      ctx.strokeStyle = muted;
+      ctx.globalAlpha = 0.35;
+      for (let k = -size; k < size; k += 7) { ctx.beginPath(); ctx.moveTo(k, 0); ctx.lineTo(k + size, size); ctx.stroke(); }
+      ctx.restore();
+      const [tx, ty] = pt(i * step, M * 0.25);
+      ctx.fillStyle = muted;
+      ctx.fillText('?', tx - 3, ty + 4);
+      return;
+    }
+    ctx.arc(cx, cy, Math.min(cm, M) / M * R, a0, a1);
+    ctx.closePath();
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = Math.max(0.2, 0.75 * (1 - (map.age_s[i] ?? 0) / 90));
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+  // что видит камера
+  const half = (map.fov_deg ?? 56) / 2;
+  ctx.strokeStyle = fg;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(...pt(-half, M));
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(...pt(half, M));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // куда идёт
+  if (map.target_deg !== undefined) {
+    const [tx, ty] = pt(map.target_deg, M * 0.55);
+    ctx.strokeStyle = fg;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+    const a = Math.atan2(ty - cy, tx - cx);
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(tx - 10 * Math.cos(a - 0.5), ty - 10 * Math.sin(a - 0.5));
+    ctx.lineTo(tx - 10 * Math.cos(a + 0.5), ty - 10 * Math.sin(a + 0.5));
+    ctx.closePath();
+    ctx.fillStyle = fg;
+    ctx.fill();
+    ctx.lineWidth = 1;
+  }
+  // люди
+  for (const q of map.people) {
+    const [x, y] = pt(q.deg, q.cm < 0 ? 150 : q.cm);
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 8); ctx.lineTo(x + 7, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 7, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.fillText(`человек ${q.cm < 0 ? '?' : metres(q.cm)}`, x + 10, y + 4);
+  }
+  // собака
+  ctx.fillStyle = fg;
+  ctx.fillRect(cx - 5, cy - 10, 10, 20);
+  ctx.beginPath();
+  ctx.moveTo(cx - 5, cy - 10); ctx.lineTo(cx, cy - 16); ctx.lineTo(cx + 5, cy - 10);
+  ctx.fill();
+  const near = map.cm.map((cm, i) => [cm, i]).filter(([cm]) => cm >= 0).sort((a, b) => a[0] - b[0])[0];
+  const deg = i => Math.round(i * step > 180 ? i * step - 360 : i * step);
+  $('radar-text').textContent = `${PATROL_NAMES[p.state]}${p.left_s !== undefined ? ` ${p.left_s} с` : ''}`
+    + (near ? ` · ближе всего ${metres(near[0])} (${deg(near[1])}°)` : ' · вокруг пока ничего не видно')
+    + (map.people.length ? ` · людей: ${map.people.length}` : '');
 }
 
 // Прошивка по воздуху (XIAO): файл .bin уходит на собаку, она пишет его во второй слот и перезагружается.
@@ -677,6 +1005,7 @@ config = await loadConfig();
 buildStatic();
 bindControls();
 setupCamera();
+setupPatrol();
 setupFirmware();
 dog = new Dog3D($('scene'), config, { onPick: select });
 dog.loadModels().then(src => { $('scene').title = `Модель: ${src}`; });

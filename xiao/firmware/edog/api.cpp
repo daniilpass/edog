@@ -7,6 +7,8 @@
 
 #include "camera.h"
 #include "gamepad.h"
+#include "patrol.h"
+#include "vision.h"
 
 static const int STATE_HZ = 20;
 static const size_t MAX_BODY = 4096;
@@ -125,6 +127,8 @@ static bool starts(const std::string &s, const char *prefix, std::string *rest =
 static void state_reply(JsonDocument &out) {
   robot->state(out);
   camera_state(out["camera"].to<JsonObject>());
+  vision_state(out["vision"].to<JsonObject>());
+  patrol_state(out["patrol"].to<JsonObject>());
 }
 
 static void route(httpd_method_t method, const std::string &path, const String &body, JsonDocument &out) {
@@ -144,6 +148,10 @@ static void route(httpd_method_t method, const std::string &path, const String &
   RobotLock lock;
   double a, b, c;
   std::string rest;
+  // Команда человека из портала ставит патруль на паузу (кроме самого патруля, зрения и видео).
+  if (method != HTTP_GET && !starts(path, "/api/patrol") && !starts(path, "/api/vision") && !starts(path, "/api/camera") &&
+      path != "/api/calibration/save")
+    patrol_user_activity();
 
   if (method == HTTP_GET) {
     if (path == "/") {
@@ -193,6 +201,20 @@ static void route(httpd_method_t method, const std::string &path, const String &
     } else if (path == "/api/camera/take") {
       // Видео смотрит одно устройство: забрать поток себе, прежний зритель отключится.
       camera_take((uint32_t)need(req["id"], "id", 1, 4294967295.0));
+    } else if (path == "/api/patrol") {
+      // Патруль: start — включить (серво включатся сами, кивок, осмотр), stop — выключить.
+      if (choice(req["action"], "action", {"start", "stop"}) == "start") patrol_start();
+      else patrol_stop("выключен из портала");
+    } else if (path == "/api/vision/phase_scan") {
+      // Подбор фазы съёмки на ходу: собака должна идти эти секунды (патруль или вручную).
+      double s = 20;
+      num(req["seconds"], "seconds", s, 5, 120);
+      vision_phase_scan(s);
+    } else if (path == "/api/vision/floor_point") {
+      // Калибровка пола: низ предмета на строке y кадра 640×480 стоит в mm от камеры.
+      vision_floor_point(need(req["y"], "y", 0, 479), need(req["mm"], "mm", 100, 5000));
+    } else if (path == "/api/vision/floor_reset") {
+      vision_floor_reset();
     } else if (path == "/api/calibration/save") {
       out["saved"] = r.save_calibration();
       return;
@@ -238,6 +260,13 @@ static void route(httpd_method_t method, const std::string &path, const String &
       r.update_power(num(req["limit_a"], "limit_a", a, 0, 50), num(req["servo_a"], "servo_a", b, 0, 5, true));
     } else if (path == "/api/trim") {
       r.update_trim(num(req["pitch_deg"], "pitch_deg", a, -10, 10), num(req["roll_deg"], "roll_deg", b, -10, 10));
+    } else if (path == "/api/patrol") {
+      // авто-старт патруля после включения питания (хранится в NVS сразу)
+      if (!req["autostart"].is<bool>()) throw HttpError{422, "autostart: нужно true/false"};
+      patrol_set_autostart(req["autostart"].as<bool>());
+    } else if (path == "/api/vision") {
+      // phase, phase_both, height_mm, tilt_deg (хранится в NVS сразу)
+      vision_configure(req.as<JsonObjectConst>());
     } else {
       throw HttpError{404, "Not Found"};
     }
@@ -389,10 +418,38 @@ static esp_err_t firmware_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// Проверка детектора людей: тело — JPEG 640×480, ответ — рамки. Для отладки зрения без человека перед камерой.
+static esp_err_t detect_handler(httpd_req_t *req) {
+  size_t len = req->content_len;
+  if (!len || len > 200 * 1024) return send_error(req, HttpError{422, "нужен JPEG до 200 КБ"});
+  uint8_t *buf = (uint8_t *)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+  if (!buf) return send_error(req, HttpError{503, "нет памяти"});
+  size_t got = 0;
+  while (got < len) {
+    int n = httpd_req_recv(req, (char *)buf + got, len - got);
+    if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+    if (n <= 0) {
+      heap_caps_free(buf);
+      return send_error(req, HttpError{400, "тело запроса не дочитано"});
+    }
+    got += n;
+  }
+  JsonDocument out;
+  try {
+    vision_detect_jpeg(buf, len, out.to<JsonObject>());
+  } catch (const ValueError &e) {
+    heap_caps_free(buf);
+    return send_error(req, HttpError{400, e.what()});
+  }
+  heap_caps_free(buf);
+  return send_doc(req, 200, out);
+}
+
 static esp_err_t any_handler(httpd_req_t *req) {
   std::string path = req->uri;
   path = path.substr(0, path.find('?'));
   if (path == "/api/firmware" && req->method == HTTP_POST) return firmware_handler(req);
+  if (path == "/api/vision/detect" && req->method == HTTP_POST) return detect_handler(req);
   if (starts(path, "/api/bluetooth/")) {
     bool scan = path == "/api/bluetooth/scan" && req->method == HTTP_GET;
     bool post = (path == "/api/bluetooth/pair" || path == "/api/bluetooth/remove") && req->method == HTTP_POST;
@@ -441,6 +498,7 @@ static esp_err_t ws_handler(httpd_req_t *req) {
     if (type == "drive") {
       robot->set_web_drive(msg["vx"] | 0.0, msg["turn"] | 0.0);
     } else if (type == "servo") {
+      patrol_user_activity();
       if (!msg["id"].is<const char *>()) throw KeyError("'id'");
       double a, j;
       const double *angle = msg["angle"].is<double>() ? &(a = msg["angle"].as<double>()) : nullptr;
@@ -483,7 +541,7 @@ static void broadcast_task(void *) {
 
 // ---------- запуск ----------
 
-void api_begin(Robot &r) {
+bool api_begin(Robot &r) {
   robot = &r;
   ws_send_lock = xSemaphoreCreateMutex();
   uint8_t sha[32];
@@ -498,8 +556,9 @@ void api_begin(Robot &r) {
   cfg.recv_wait_timeout = 10;   // прошивка по воздуху идёт крупными кусками
   cfg.uri_match_fn = httpd_uri_match_wildcard;
   if (httpd_start(&server, &cfg) != ESP_OK) {
-    Serial.println("API: сервер не запустился");
-    return;
+    Serial.printf("API: сервер не запустился (свободно внутренней памяти %u КБ)\n",
+                  heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+    return false;
   }
   httpd_uri_t ws = {};
   ws.uri = "/ws";
@@ -521,4 +580,5 @@ void api_begin(Robot &r) {
   httpd_register_uri_handler(server, &opt);
   xTaskCreatePinnedToCore(broadcast_task, "ws_state", 8192, nullptr, 2, nullptr, 0);
   Serial.printf("API: http://<адрес>:%d/api, WebSocket /ws\n", API_PORT);
+  return true;
 }

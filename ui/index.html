@@ -54,16 +54,65 @@
   <div class="card camera-card" id="camera-card" hidden>
     <h2>Камера</h2>
     <div class="camera">
-      <img id="cam-img" alt="Видео с камеры собаки">
+      <canvas id="cam-canvas" width="640" height="480" aria-label="Видео с камеры собаки"></canvas>
       <div class="camera-msg" id="cam-msg"></div>
     </div>
     <div class="row" id="cam-ask" hidden><span id="cam-ask-text"></span> <button id="cam-take">Переключить сюда</button></div>
-    <label class="row" title="Выключенное видео не грузит Wi-Fi собаки"><input type="checkbox" id="cam-on"> Показывать видео</label>
+    <div class="row">
+      <label title="Выключенное видео не грузит Wi-Fi собаки"><input type="checkbox" id="cam-on"> Показывать видео</label>
+      <label title="Рамки людей, граница свободного пола и состояние патруля поверх видео"><input type="checkbox" id="cam-overlay"> Что видит собака</label>
+    </div>
     <div class="muted" id="cam-info"></div>
+  </div>
+
+  <div class="card radar-card" id="radar-card" hidden>
+    <h2>Радар</h2>
+    <canvas id="radar" width="320" height="320" aria-label="Карта вокруг собаки"></canvas>
+    <div class="radar-text" id="radar-text"></div>
+    <div class="muted">Вид сверху, нос вверх. Длина клина — свободно до препятствия; бледнее — давно видели;
+      штрих и «?» — не знаем; ◆ — человек; рамка с вершиной у собаки — что видит камера; стрелка — куда идёт.</div>
   </div>
   </div>
 
   <aside class="panel">
+    <div class="card" id="patrol-card" hidden>
+      <h2>Патруль</h2>
+      <div class="row">
+        <button id="patrol-toggle" class="primary">Запустить патруль</button>
+        <label title="После включения питания собака сама встаёт, через 5 с кивает и идёт патрулировать. После прошивки по воздуху и сбоев — нет">
+          <input type="checkbox" id="patrol-auto"> Сам после включения</label>
+      </div>
+      <div class="patrol-state" id="patrol-state">—</div>
+      <div class="muted" id="patrol-info"></div>
+      <div class="muted">Стик, кнопка геймпада или команда из портала — пауза; через 5 с тишины собака кивает и продолжает.
+        Крестовина → на геймпаде — патруль вкл/выкл. СТОП выключает патруль.</div>
+    </div>
+
+    <div class="card" id="vision-card" hidden>
+      <h2>Зрение</h2>
+      <div class="muted" id="vis-info"></div>
+      <h3>Фаза шага для кадров на ходу</h3>
+      <div class="muted" id="vis-phase"></div>
+      <div class="row">
+        <button id="vis-phase-scan" title="20 с: собака должна идти вперёд (патруль или стрелками). Корпус в разных фазах шага — в разной позе; выбирается фаза, где кадры на соседних шагах отличаются меньше всего">Подобрать фазу</button>
+        <span class="muted" id="vis-phase-scan-info"></span>
+      </div>
+      <h3>Пол: расстояние по кадру</h3>
+      <div class="muted" id="vis-floor"></div>
+      <div class="row">поставьте предмет на
+        <input type="number" id="vis-floor-mm" value="500" min="100" max="5000" step="50" class="narrow"> мм от камеры
+        <button id="vis-floor-pick" title="Затем кликните на видео точно по низу предмета, где он касается пола. 2–3 точки на разных расстояниях — точнее">Указать на видео</button>
+      </div>
+      <details>
+        <summary>Высота и наклон вручную</summary>
+        <div class="calib">
+          <label>Высота камеры, мм <input type="number" id="vis-h" min="30" max="400" step="1"></label>
+          <label>Наклон вниз, ° <input type="number" id="vis-tilt" min="-20" max="70" step="0.5"></label>
+        </div>
+        <div class="row"><button id="vis-apply">Применить</button><button id="vis-floor-reset">Сбросить калибровку</button></div>
+      </details>
+    </div>
+
     <div class="card">
       <h2>Режим</h2>
       <div class="seg" id="modes">

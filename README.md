@@ -18,14 +18,14 @@ ui/            — общий веб-портал с 3D-моделью (для R
 rpi/           — ЛЕГАСИ, не трогаем: всё для Raspberry Pi
   firmware/      — сервис: серво, геймпад, API (см. rpi/firmware/README.md); на Pi лежит в ~/edog/firmware
   tools/         — консольные утилиты для собаки
-xiao/          — всё для XIAO ESP32-S3 Sense: прошивка собаки (замена RPi, плюс видео в портале), тестовая прошивка (см. xiao/README.md)
-android/       — приложение для Android: видео с камеры собаки на весь экран (см. android/README.md)
+xiao/          — всё для XIAO ESP32-S3 Sense: прошивка собаки (замена RPi, видео, патруль по камере), тестовая прошивка (см. xiao/README.md)
+android/       — приложение для Android: видео с камеры собаки с разметкой и радар (см. android/README.md)
 docs/          — обсуждение идей, решения, заметки по железу
 ```
 
 ## О проекте и железе
 
-См. [docs/project.md](docs/project.md) и [docs/hardware.md](docs/hardware.md).
+См. [docs/project.md](docs/project.md) и [docs/hardware.md](docs/hardware.md). Патруль по камере — [docs/patrol.md](docs/patrol.md).
 
 ## CAD
 

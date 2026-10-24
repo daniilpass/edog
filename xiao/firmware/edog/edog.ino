@@ -4,6 +4,8 @@
      порт 8080 — REST /api/… и WebSocket /ws, те же, что на Pi;
      порт 8081 — /stream, видео MJPEG с камеры.
    Серво — через PCA9685 по I²C (SDA D4, SCL D5), геймпад — BLE (HID), сопряжение из портала.
+   Патруль по камере (patrol.cpp, vision.cpp): после включения питания собака встаёт, через 5 с кивает
+   и патрулирует — ищет новые места и людей, встретив человека, приветствует.
 
    Wi-Fi: если сеть не сохранена или к ней не подключиться за 15 с — плата поднимает точку доступа
    EDOG-XIAO (пароль edog1234, адрес 192.168.4.1). Подключившись, плата доступна как edog.local.
@@ -15,17 +17,63 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <esp_ota_ops.h>
+#include <esp_heap_caps.h>
+#include <esp_timer.h>
 
 #include "api.h"
 #include "camera.h"
 #include "config.h"
 #include "gamepad.h"
+#include "patrol.h"
 #include "pca9685.h"
 #include "robot.h"
+#include "vision.h"
 
 static Driver driver;
 static Robot *robot;
 static bool ap_mode = false;
+static bool api_ok = false;
+
+// ---------- откат прошивки ----------
+// Новая прошивка после записи по воздуху — «на проверке». Рабочей она считается, только когда API
+// поднялось и проработало VALID_AFTER_MS: иначе её уже не заменить по воздуху. Не дожила за
+// ROLLBACK_AFTER_MS (зависла в setup, падает по кругу) — перезагрузка, загрузчик возвращает прежнюю.
+
+static const uint32_t VALID_AFTER_MS = 20000, ROLLBACK_AFTER_MS = 90000;
+static bool on_probation = false;
+
+// Arduino не помечает прошивку рабочей сам. extern "C": ядро объявляет слабую функцию в esp32-hal-misc.c.
+extern "C" bool verifyRollbackLater() { return true; }
+
+static void rollback_timer(void *) {
+  if (!on_probation) return;
+  Serial.println("Прошивка не дожила до проверки — откат на прежнюю");
+  esp_ota_mark_app_invalid_rollback_and_reboot();
+  esp_restart();   // откатывать некуда (прошита по USB) — хотя бы перезагрузиться
+}
+
+static void start_probation() {
+  esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
+  esp_err_t err = esp_ota_get_state_partition(esp_ota_get_running_partition(), &st);
+  Serial.printf("Прошивка: слот %s, состояние %d (ошибка %d)\n", esp_ota_get_running_partition()->label, (int)st, (int)err);
+  on_probation = err == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY;
+  if (!on_probation) return;
+  Serial.println("Прошивка на проверке: рабочей станет, когда поднимется API");
+  esp_timer_create_args_t a = {};
+  a.callback = rollback_timer;
+  a.name = "rollback";
+  esp_timer_handle_t t;
+  esp_timer_create(&a, &t);
+  esp_timer_start_once(t, (uint64_t)ROLLBACK_AFTER_MS * 1000);
+}
+
+static void check_probation() {
+  if (!on_probation || !api_ok || millis() < VALID_AFTER_MS) return;
+  on_probation = false;
+  esp_ota_mark_app_valid_cancel_rollback();
+  Serial.println("Прошивка проверена: API работает");
+}
 
 // ---------- контур ----------
 
@@ -136,6 +184,7 @@ void setup() {
   Serial.begin(115200);
   delay(1500);   // успеть открыть монитор порта
   Serial.println("\nEDOG XIAO");
+  start_probation();
 
   robot_lock_init();
   driver.begin();
@@ -143,13 +192,21 @@ void setup() {
   xTaskCreatePinnedToCore(loop_task, "robot", 8192, nullptr, 5, nullptr, 1);
 
   init_wifi();
+  vision_begin();   // лёгкая часть: буферы и задача; модель людей грузится уже в задаче
+  // API — сразу после сети: через него прошивка по воздуху, оно должно жить, даже если дальше что-то сломалось
+  api_ok = api_begin(*robot);
   camera_begin();   // после Wi-Fi: сервер видео не стартует без сетевого стека
   gamepad_begin(*robot);
-  api_begin(*robot);
+  patrol_begin(*robot);
+  heap_caps_malloc_extmem_enable(EXTMEM_LIMIT);
   print_status();
+  // Патруль сам — только после включения питания. После прошивки по воздуху, сбоя или просадки
+  // питания собака не встаёт и не идёт сама: её могли оставить на столе.
+  if (esp_reset_reason() == ESP_RST_POWERON) patrol_autostart();
 }
 
 void loop() {
+  check_probation();
   handle_serial();
   delay(20);
 }

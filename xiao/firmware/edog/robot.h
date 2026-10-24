@@ -75,6 +75,19 @@ struct Power {
 
 class Demo;
 
+// Что делает робот в момент t (для кадров камеры: в какой фазе шага снят кадр).
+struct Motion {
+  double t = 0;
+  double cycles = 0;     // фаза шага с начала ходьбы, циклы (дробная часть — фаза 0 … 1)
+  double gait_hz = 0;
+  bool walking = false;
+  bool still = false;    // стоит неподвижно: не идёт, нет движения, серво дошли до целей
+  double vx = 0, turn = 0;
+};
+// Ближайшая к t запись контура за последние ~0.6 с; false — такой давней записи нет.
+bool robot_motion_at(double t, Motion &out);
+double robot_still_since();   // с какого времени стоит неподвижно; NAN — сейчас не стоит
+
 // Что знает о геймпаде портал.
 struct PadInfo {
   bool connected = false;
@@ -95,6 +108,7 @@ class Robot {
   void start_move(const std::string &name);
   void set_body(const double *height, const double *pitch, const double *roll);
   void set_web_drive(double vx, double turn);
+  void set_patrol_drive(double vx, double turn);   // слабее портала и геймпада; гаснет без повторения
   void set_servo(const std::string &sid, const double *angle, const double *joint);
   void nudge(const std::string &sid, double delta);
   void test_servo(const std::string &sid, const std::string &action);
@@ -112,6 +126,10 @@ class Robot {
 
   bool is_pose(const std::string &name) const;
   bool is_move(const std::string &name) const;
+  bool moving() const { return !move_name_.empty(); }   // идёт движение (прыжок, радость…)
+  bool powering_down() const { return !std::isnan(powering_down_); }
+  bool web_driving() const;                             // портал сейчас ведёт собаку стрелками
+  const GaitCfg &gait_cfg() const { return gait(); }
 
   void step(double dt);
   void describe(JsonDocument &doc);
@@ -125,6 +143,8 @@ class Robot {
   double pad_drive[2] = {0, 0};      // vx, turn с геймпада
   double height_rate = 0;            // курки: −1 вниз … 1 вверх
   PadInfo gamepad;
+  uint32_t pad_presses = 0;          // счётчик нажатий кнопок геймпада: патруль видит, что человек взялся за него
+  uint32_t estops = 0;               // счётчик аварийных стопов
 
  private:
   Driver &driver_;
@@ -133,7 +153,11 @@ class Robot {
   double roll_offset_ = 0;
   double web_drive_[2] = {0, 0};
   double web_drive_t_ = -1e9;
+  double patrol_drive_[2] = {0, 0};
+  double patrol_drive_t_ = -1e9;
   double phase_ = 0, walk_blend_ = 0, forward_blend_ = 1;
+  double cycles_ = 0;                 // фаза с начала ходьбы, не сворачивается в 0 … 1
+  void record_motion();
   bool walking_ = false;
   int gait_ = 0;
   Body body_;

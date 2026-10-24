@@ -4,4 +4,4 @@
 
 #include "robot.h"
 
-void api_begin(Robot &robot);
+bool api_begin(Robot &robot);   // false — сервер не запустился

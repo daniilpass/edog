@@ -51,6 +51,43 @@ void robot_lock_init() { robot_mutex = xSemaphoreCreateRecursiveMutex(); }
 RobotLock::RobotLock() { xSemaphoreTakeRecursive(robot_mutex, portMAX_DELAY); }
 RobotLock::~RobotLock() { xSemaphoreGiveRecursive(robot_mutex); }
 
+// ---------- история движения ----------
+// Кадр камеры приходит с отметкой времени съёмки; по ней зрение узнаёт фазу шага в момент съёмки.
+// Контур пишет запись каждый шаг (100 Гц), без общего замка робота — только короткий спинлок.
+
+static const int MOTION_LOG = 64;   // 0.64 с при 100 Гц
+static Motion motion_log[MOTION_LOG];
+static int motion_head = 0;
+static double still_since = NAN;
+static portMUX_TYPE motion_mux = portMUX_INITIALIZER_UNLOCKED;
+
+bool robot_motion_at(double t, Motion &out) {
+  bool found = false;
+  double best = INFINITY;
+  portENTER_CRITICAL(&motion_mux);
+  for (const Motion &m : motion_log) {
+    double d = std::fabs(m.t - t);
+    if (m.t > 0 && d < best) {
+      best = d;
+      out = m;
+      found = true;
+    }
+  }
+  portEXIT_CRITICAL(&motion_mux);
+  if (!found || best > 0.02) return false;
+  // между записями фаза идёт равномерно
+  if (out.walking) out.cycles += out.gait_hz * (t - out.t);
+  out.t = t;
+  return true;
+}
+
+double robot_still_since() {
+  portENTER_CRITICAL(&motion_mux);
+  double s = still_since;
+  portEXIT_CRITICAL(&motion_mux);
+  return s;
+}
+
 // ---------- шаг ----------
 
 // Смещение лапы (вперёд, вверх) от нейтрали в системе корпуса, мм, в фазе цикла phase.
@@ -268,7 +305,7 @@ Body Robot::pose(const std::string &name) const {
 static const char *const BODY_POSES[] = {"stand", "sit", "lie", "high"};
 // Позы, заданные углами суставов, а не корпусом: mount — монтажное положение, load — поза под нагрузкой.
 static const char *const JOINT_POSES[] = {"mount", "load"};
-static const char *const MOVES[] = {"jump", "joy"};
+static const char *const MOVES[] = {"jump", "joy", "nod", "wag", "bow"};
 
 bool Robot::is_pose(const std::string &name) const {
   for (auto p : BODY_POSES) if (name == p) return true;
@@ -296,6 +333,26 @@ std::vector<MoveStep> Robot::moves(const std::string &name) const {
     }
     return steps;
   }
+  Body stand = pose("stand");
+  auto tilted = [&](double pitch, double roll) {
+    Body b = stand;
+    b.pitch = pitch;
+    b.roll = roll;
+    return b;
+  };
+  if (name == "nod")   // кивок: нос вниз и обратно — «начинаю патруль»
+    return {{tilted(-10, 0), 0.3, NAN}, {tilted(4, 0), 0.25, NAN}, {stand, 0.2, NAN}};
+  if (name == "wag") {   // виляние: крен с борта на борт 3 раза, не больше ±7° (на 8° уже опасно)
+    std::vector<MoveStep> steps;
+    for (int i = 0; i < 3; i++) {
+      steps.push_back({tilted(0, 7), 0.22, NAN});
+      steps.push_back({tilted(0, -7), 0.22, NAN});
+    }
+    steps.push_back({stand, 0.2, NAN});
+    return steps;
+  }
+  if (name == "bow")   // поклон, как у играющей собаки: нос вниз, пауза, обратно
+    return {{tilted(-MAX_TILT_DEG, 0), 0.9, NAN}, {stand, 0.3, NAN}};
   throw KeyError("'" + name + "'");
 }
 
@@ -377,7 +434,9 @@ void Robot::do_switch(bool on) {
 }
 
 void Robot::estop() {
+  estops++;
   web_drive_[0] = web_drive_[1] = pad_drive[0] = pad_drive[1] = 0;
+  patrol_drive_[0] = patrol_drive_[1] = 0;
   stop_demo();
   if (enabled) do_switch(false);
 }
@@ -424,6 +483,16 @@ void Robot::set_web_drive(double vx, double turn) {
   web_drive_[0] = clampd(vx, -1, 1);
   web_drive_[1] = clampd(turn, -1, 1);
   web_drive_t_ = now_s();
+}
+
+void Robot::set_patrol_drive(double vx, double turn) {
+  patrol_drive_[0] = clampd(vx, -1, 1);
+  patrol_drive_[1] = clampd(turn, -1, 1);
+  patrol_drive_t_ = now_s();
+}
+
+bool Robot::web_driving() const {
+  return now_s() - web_drive_t_ < DRIVE_TIMEOUT_S && (web_drive_[0] || web_drive_[1]);
 }
 
 void Robot::leg_joints(int leg, bool current, double &hip, double &knee) {
@@ -753,11 +822,15 @@ void Robot::demo_step(int leg, double t, double &hip, double &knee) const {
   ik(x, z, FEMUR_MM, TIBIA_MM, l.knee_dir, TIBIA_BEND_DEG, hip, knee);
 }
 
+// Кто ведёт собаку: портал (команда свежая) → геймпад (стик отклонён) → патруль (команда свежая).
 void Robot::drive(double &vx, double &turn, const char **source) {
-  bool web = now_s() - web_drive_t_ < DRIVE_TIMEOUT_S;
-  vx = web ? web_drive_[0] : pad_drive[0];
-  turn = web ? web_drive_[1] : pad_drive[1];
-  if (source) *source = web ? "web" : "gamepad";
+  double now = now_s();
+  bool web = now - web_drive_t_ < DRIVE_TIMEOUT_S;
+  bool pad = pad_drive[0] || pad_drive[1];
+  bool patrol = !web && !pad && now - patrol_drive_t_ < DRIVE_TIMEOUT_S;
+  vx = web ? web_drive_[0] : patrol ? patrol_drive_[0] : pad_drive[0];
+  turn = web ? web_drive_[1] : patrol ? patrol_drive_[1] : pad_drive[1];
+  if (source) *source = web ? "web" : patrol ? "patrol" : "gamepad";
 }
 
 // ---------- контур ----------
@@ -776,9 +849,13 @@ void Robot::feet(double dt, double xs[4], double zs[4]) {
   } else if (!walking_ && walk_blend_ == 0.0 && settled()) {
     walking_ = true;
     phase_ = 0.0;
+    cycles_ = 0.0;
   }
   bool walking = walking_;
-  if (walking) phase_ = pmod1(phase_ + g.gait_hz * dt);
+  if (walking) {
+    phase_ = pmod1(phase_ + g.gait_hz * dt);
+    cycles_ += g.gait_hz * dt;
+  }
   // Профиль может ходить на своей высоте и с лапами, вынесенными от оси бедра. Старт плавный,
   // шаг растёт вместе с ним. Остановка — сразу в стойку профиля.
   walk_blend_ = walking ? clampd(walk_blend_ + dt / WALK_RAMP_S, 0.0, 1.0) : 0.0;
@@ -906,6 +983,24 @@ void Robot::step(double dt) {
     if (done || now_s() - powering_down_ > POWER_DOWN_TIMEOUT_S) do_switch(false);
   }
   if (enabled) write();
+  record_motion();
+}
+
+void Robot::record_motion() {
+  Motion m;
+  m.t = now_s();
+  m.cycles = cycles_;
+  m.gait_hz = gait().gait_hz;
+  m.walking = walking_ && enabled && !demo_;
+  drive(m.vx, m.turn, nullptr);
+  // без сигнала серво собака лежит неподвижно — для камеры это тоже «стоит»
+  m.still = !demo_ && (!enabled || (!walking_ && move_name_.empty() && std::isnan(powering_down_) && settled()));
+  portENTER_CRITICAL(&motion_mux);
+  motion_log[motion_head] = m;
+  motion_head = (motion_head + 1) % MOTION_LOG;
+  if (!m.still) still_since = NAN;
+  else if (std::isnan(still_since)) still_since = m.t;
+  portEXIT_CRITICAL(&motion_mux);
 }
 
 // Шаг, поднимающий узел колена выше рамы, отменяется: нога стоит, где стояла.

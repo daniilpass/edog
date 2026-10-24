@@ -19,6 +19,34 @@ static const int CAMERA_QUALITY = 12;         // JPEG: 0 — лучше … 63 �
 static const bool CAMERA_VFLIP = false;       // камера стоит вверх ногами
 static const bool CAMERA_HMIRROR = true;
 
+// ---------- память ----------
+// Внутренней памяти мало (Wi-Fi, Bluetooth, камера, API), PSRAM — 8 МБ. Обычный malloc от этого размера
+// идёт в PSRAM (в ядре — от 4096). Ставится в конце setup(), когда драйверы уже взяли своё.
+static const size_t EXTMEM_LIMIT = 512;
+
+// ---------- зрение ----------
+// Камера как точечная: по углу обзора, высоте и наклону строка кадра переводится в расстояние по полу.
+// Высота и наклон уточняются калибровкой пола из портала (хранится в NVS), здесь — начальные значения.
+static const double CAMERA_HFOV_DEG = 56.0;        // угол обзора по горизонтали (OV2640, штатный объектив)
+static const double CAMERA_HEIGHT_MM = 110.0;      // высота объектива над полом в стойке
+static const double CAMERA_TILT_DEG = 12.0;        // наклон оптической оси вниз от горизонта
+static const double VISION_PHASE = 0.0;            // фаза шага (0 … 1), в которую снимаются кадры на ходу
+static const double VISION_PHASE_TOL = 0.05;       // кадр дальше этого от фазы (доля цикла) не берётся
+static const bool VISION_PHASE_BOTH = false;       // брать и вторую диагональ (фаза + 0.5): кадров вдвое больше
+static const double VISION_SETTLE_S = 0.3;         // стоя: кадр берётся через столько после остановки
+static const float PERSON_SCORE = 0.5f;            // уверенность детектора, ниже — не человек
+static const double PERSON_HEIGHT_MM = 1650.0;     // рост для оценки расстояния по высоте рамки
+static const double FREE_MAX_MM = 3000.0;          // свободное расстояние дальше этого — «далеко»
+
+// ---------- патруль ----------
+static const double PATROL_COUNTDOWN_S = 5.0;      // после включения и после паузы: столько ждать, потом кивок
+static const double PATROL_IGNORE_S = 18.0;        // после приветствия людей не замечать
+static const double PATROL_TURN_DPS = 45.0;        // скорость разворота на месте, °/с (уточняется по камере)
+static const double PATROL_SLIP = 0.7;             // доля расчётной скорости шага, которая доходит до пола
+static const double PATROL_GREET_MM = 1100.0;      // подходить к человеку до этого расстояния
+static const double PATROL_TOO_CLOSE_MM = 500.0;   // ближе — сначала отойти назад
+static const double PATROL_MEMORY_S = 480.0;       // зрительная память мест: столько помнит увиденное
+
 // ---------- драйвер PCA9685 ----------
 static const int I2C_SDA = 5;                 // D4
 static const int I2C_SCL = 6;                 // D5
@@ -120,4 +148,5 @@ static const Mapping GAMEPAD_BUTTONS[] = {    // кнопка → действи
 static const Mapping GAMEPAD_DPAD[] = {       // крестовина → действие
   {"up", "jump"},
   {"down", "joy"},
+  {"right", "patrol"},          // патруль вкл/выкл
 };

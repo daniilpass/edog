@@ -1,11 +1,13 @@
-// Камера платы Sense: видео MJPEG на STREAM_PORT, /stream. Свой сервер: поток держит обработчик.
 #pragma once
 
 #include <ArduinoJson.h>
 
 void camera_begin();
-// Для /api/config и состояния: есть ли камера, сенсор, порт и путь потока, кадры в секунду.
 void camera_describe(JsonObject out);
 void camera_state(JsonObject out);
-// Отдать поток зрителю id (тот же id он передаёт в /stream?id=): текущий зритель отключается.
-void camera_take(uint32_t id);
+void camera_take(uint32_t id);   // забрать видео этому зрителю
+int camera_clients();            // сколько зрителей смотрит видео
+
+// Последний кадр JPEG новее after (номер кадра): копия в buf (ёмкость cap), время съёмки, с.
+// 0 — нового кадра нет за wait_ms; иначе номер кадра.
+uint32_t camera_latest(uint8_t *buf, size_t cap, size_t &len, double &t, uint32_t after, uint32_t wait_ms);
