@@ -17,6 +17,7 @@
 | `xiao_stand_with_supports.stl` | та же подставка XIAO с поддержками под мостом над окном штекера (стенки 0.8, зазор 0.2 сверху и снизу, 0.8 до ног) | `cad/freecad/EDOG_V_XIAO_Layout.FCStd` |
 | `xiao_stand_cap.stl` | крышка подставки XIAO: над платами, язык на объектив, 2 самореза M1.7 | `cad/freecad/EDOG_V_XIAO_Layout.FCStd` |
 | `pca_brackets.stl` | рамка PCA: 2 Г-полки 3 мм за платой (M3 с гайкой через нижние отверстия), 2 винта M3 в пол | `cad/freecad/EDOG_V_XIAO_Layout.FCStd` |
+| `gamepad_phone_holder_fold6.stl` | держатель телефона на Xbox-геймпад под сложенный Galaxy Fold 6 в Kindsuit (~71.5×16): чашки S-пружины шире на 8 мм, натяг ~5 мм; скоба на геймпад без изменений. PLA без заполнения, боком на стол | [XBox Controller Phone Holder](https://www.thingiverse.com/thing:5762576) by spiderkitty72, CC BY |
 
 ## Электроника на XIAO ESP32-S3 Sense (EDOG_V)
 

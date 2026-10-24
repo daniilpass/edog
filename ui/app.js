@@ -192,6 +192,7 @@ function render(s) {
   $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', manual: 'ручной', demo: 'демо' }[s.mode]}`;
   renderDemo(s);
   renderGait(s.gait);
+  renderCamera(s);
 
   renderPower(s.power);
   renderTrim(s.trim);
@@ -214,6 +215,157 @@ function render(s) {
     cell('limits').textContent = `${sv.min_deg}…${sv.max_deg}`;
   }
   renderDetail();
+}
+
+// Видео с камеры собаки (MJPEG, свой порт). Блок есть, только если плата сообщает о камере (XIAO Sense).
+// Поток один на всех: собака отдаёт его зрителю с id из /stream?id= и сообщает в состоянии camera.viewer.
+// Если смотрит другое устройство (приложение, другая вкладка), портал спрашивает, переключить ли видео сюда;
+// после POST /api/camera/take прежний зритель отключается. Поток обрывается и молча (собака перезагрузилась,
+// Wi-Fi пропал): если зрителей нет, а картинка должна идти, — переподключаемся.
+
+const CAM_KEY = 'edog.camera';
+const camId = 1 + Math.floor(Math.random() * 0x7fffffff);
+// wait — решить по следующему состоянию, watch — смотрим, ask — занято другим, off — выключено
+let camUrl = null, camStarted = 0, camMode = 'off';
+
+function camStart() {
+  camMode = 'watch';
+  camStarted = Date.now();
+  $('cam-ask').hidden = true;
+  $('cam-img').src = `${camUrl}?id=${camId}&t=${camStarted}`;
+  $('cam-msg').textContent = 'подключение к видео…';
+}
+
+function camStop(msg) {
+  $('cam-img').removeAttribute('src');
+  $('cam-msg').textContent = msg;
+}
+
+function camAsk(text) {
+  camMode = 'ask';
+  camStop('видео на другом устройстве');
+  $('cam-ask-text').textContent = text;
+  $('cam-ask').hidden = false;
+}
+
+async function camTake() {
+  $('cam-take').disabled = true;
+  try {
+    await api('POST', '/api/camera/take', { id: camId });
+    camStart();
+  } catch { /* ошибку показал api() */ }
+  $('cam-take').disabled = false;
+}
+
+function setupCamera() {
+  const cam = config.camera;
+  if (!cam) return;
+  $('camera-card').hidden = false;
+  if (!cam.ok) {
+    $('cam-msg').textContent = `⚠ Камера не работает: ${cam.error ?? 'сенсор не найден'}`;
+    $('cam-on').disabled = true;
+    return;
+  }
+  camUrl = `http://${DOG_HOST.replace(/:\d+$/, '')}:${cam.port}${cam.path}`;
+  const box = $('cam-on');
+  try { box.checked = localStorage.getItem(CAM_KEY) !== '0'; } catch { box.checked = true; }
+  const apply = () => {
+    $('cam-ask').hidden = true;
+    if (box.checked) {
+      camMode = 'wait';
+      camStarted = 0;
+      camStop('подключение к видео…');
+    } else {
+      camMode = 'off';
+      camStop('видео выключено');
+    }
+  };
+  box.onchange = () => {
+    try { localStorage.setItem(CAM_KEY, box.checked ? '1' : '0'); } catch { /* без хранилища */ }
+    apply();
+  };
+  $('cam-take').onclick = camTake;
+  $('cam-img').onerror = () => {
+    if (camMode !== 'watch') return;
+    camMode = 'wait';
+    camStarted = Date.now();
+    $('cam-msg').textContent = '⚠ Нет видео · переподключение…';
+  };
+  apply();
+}
+
+function renderCamera(s) {
+  const cam = config.camera;
+  if (!cam?.ok || !s.camera) return;
+  const viewer = s.camera.viewer ?? 0, other = viewer !== 0 && viewer !== camId;
+  if (camMode === 'watch' && other) {
+    camAsk('Видео переключили на другое устройство. Вернуть сюда?');
+  } else if (camMode === 'wait' && Date.now() - camStarted > 2000) {
+    other ? camAsk('Видео смотрит другое устройство. Переключить сюда?') : camStart();
+  } else if (camMode === 'ask' && !viewer) {
+    camStart();   // другое устройство отключилось — поток свободен
+  } else if (camMode === 'watch') {
+    if (s.camera.fps > 0 && $('cam-msg').textContent.startsWith('подключение')) $('cam-msg').textContent = '';
+    if (!s.camera.clients && Date.now() - camStarted > 4000) camStart();
+  }
+  const status = { watch: `${s.camera.fps} кадр/с из ${cam.fps}`, ask: 'на другом устройстве', off: 'выключено', wait: 'подключение' }[camMode];
+  $('cam-info').textContent = `${cam.sensor} · ${status} · ${camUrl}`;
+}
+
+// Прошивка по воздуху (XIAO): файл .bin уходит на собаку, она пишет его во второй слот и перезагружается.
+// Новая прошивка видна по отпечатку в GET / — когда он сменился, портал перезагружается сам.
+
+function setupFirmware() {
+  if (!config.firmware) return;
+  $('fw-card').hidden = false;
+  $('fw-id').textContent = `Сейчас: ${config.firmware}`;
+  $('fw-load').onclick = () => {
+    if (state?.enabled) { toast('Обновление прошивки: сначала выключите серво', 'error'); return; }
+    $('fw-file').click();
+  };
+  $('fw-file').onchange = e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const info = $('fw-info'), btn = $('fw-load');
+    btn.disabled = true;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', API + '/api/firmware');
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = ev => { info.textContent = `Загрузка ${file.name}: ${Math.round(ev.loaded / ev.total * 100)}%`; };
+    xhr.onerror = () => { btn.disabled = false; info.textContent = '⚠ Передача оборвалась, прошивка не менялась'; };
+    xhr.onload = () => {
+      let detail;
+      try { detail = JSON.parse(xhr.responseText).detail; } catch { /* не JSON */ }
+      if (xhr.status !== 200) {
+        btn.disabled = false;
+        info.textContent = `⚠ Не обновлено: ${detail ?? `ошибка ${xhr.status}`}`;
+        return;
+      }
+      info.textContent = 'Записано, собака перезагружается…';
+      waitFirmware(config.firmware, Date.now());
+    };
+    xhr.send(file);
+  };
+}
+
+async function waitFirmware(old, started, wentDown = false) {
+  try {
+    const r = await fetch(API + '/');
+    const fw = (await r.json()).firmware;
+    if (fw && fw !== old) { toast(`Прошивка обновлена: ${fw}`); setTimeout(() => location.reload(), 1000); return; }
+    if (fw && wentDown) {
+      $('fw-info').textContent = `Собака перезагрузилась, прошивка та же (${fw}): залит тот же файл?`;
+      $('fw-load').disabled = false;
+      return;
+    }
+  } catch { wentDown = true; /* ещё перезагружается */ }
+  if (Date.now() - started > 60000) {
+    $('fw-info').textContent = '⚠ Собака не вернулась за минуту с новой прошивкой — проверьте её (Serial, питание)';
+    $('fw-load').disabled = false;
+    return;
+  }
+  setTimeout(() => waitFirmware(old, started, wentDown), 2000);
 }
 
 // Демо: ноги по кругу шагают в воздухе; сколько ног сразу — подбирает собака по лимиту тока.
@@ -378,6 +530,21 @@ function bindControls() {
   $('cal-max-cur').onclick = () => patch({ max_deg: Math.round(current().current * 2) / 2 });
   $('cal-save').onclick = () => api('POST', '/api/calibration/save')
     .then(r => { calibDirty = false; toast(`Сохранено: ${r.saved}`); });
+  // Калибровка из файла (calibration.json с Pi): применяется сразу, в память собаки — кнопкой «Сохранить».
+  $('cal-load').onclick = () => $('cal-file').click();
+  $('cal-file').onchange = async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    let data;
+    try { data = JSON.parse(await file.text()); } catch { toast(`${file.name}: это не JSON`, 'error'); return; }
+    api('PUT', '/api/calibration', data).then(s => {
+      calibDirty = true;
+      render(s);
+      if (selected) select(selected);
+      toast(`Калибровка из ${file.name} загружена (не забудьте сохранить)`);
+    });
+  };
   $('sd-installed').onchange = e => setInstalled(selected, e.target.checked);
   for (const b of document.querySelectorAll('[data-delta]')) {
     // Шаг по углу СУСТАВА (не серво): «+» — всегда к голове на любой ноге, а после
@@ -512,6 +679,8 @@ renderLink();
 config = await loadConfig();
 buildStatic();
 bindControls();
+setupCamera();
+setupFirmware();
 dog = new Dog3D($('scene'), config, { onPick: select });
 dog.loadModels().then(src => { $('scene').title = `Модель: ${src}`; });
 

@@ -16,7 +16,8 @@ ui/            — общий веб-портал с 3D-моделью (для R
 rpi/           — всё для Raspberry Pi
   firmware/      — сервис: серво, геймпад, API (см. rpi/firmware/README.md); на Pi лежит в ~/edog/firmware
   tools/         — консольные утилиты для собаки
-xiao/          — всё для XIAO ESP32-S3 Sense: прошивка, страница проверки камеры и микрофона (см. xiao/README.md)
+xiao/          — всё для XIAO ESP32-S3 Sense: прошивка собаки (замена RPi, плюс видео в портале), тестовая прошивка (см. xiao/README.md)
+android/       — приложение для Android: видео с камеры собаки на весь экран (см. android/README.md)
 docs/          — обсуждение идей, решения, заметки по железу
 ```
 

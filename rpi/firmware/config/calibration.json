@@ -1,0 +1,67 @@
+{
+  "FL_hip": {
+    "installed": true,
+    "zero": 81.0,
+    "dir": -1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "FL_knee": {
+    "installed": true,
+    "zero": 3.0,
+    "dir": 1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "FR_hip": {
+    "installed": true,
+    "zero": 83.0,
+    "dir": 1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "FR_knee": {
+    "installed": true,
+    "zero": 175.0,
+    "dir": -1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "RL_hip": {
+    "installed": true,
+    "zero": 78.0,
+    "dir": -1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "RL_knee": {
+    "installed": true,
+    "zero": -2.0,
+    "dir": 1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "RR_hip": {
+    "installed": true,
+    "zero": 94.0,
+    "dir": 1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "RR_knee": {
+    "installed": true,
+    "zero": 180.0,
+    "dir": -1,
+    "min_deg": 5.0,
+    "max_deg": 175.0
+  },
+  "power": {
+    "limit_a": 8.0,
+    "servo_a": 0.9
+  },
+  "gait": "base",
+  "trim": {
+    "pitch_deg": 0.0,
+    "roll_deg": 0.0
+  }
+}

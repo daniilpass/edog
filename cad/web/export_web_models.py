@@ -98,8 +98,9 @@ def leg_matrices(leg):
     y_tip = SHAFT_TIP_Y[leg[1]]
     P = V(HIP_X[leg[0]], y_tip, HIP_Z)
     y_inner = y_tip - o * HORN_GAP
-    # бедро прямой стороной наружу (файл Y=9 внутрь), отверстие (0,0,0) на оси бедра
-    femur = Matrix(0, 0, o, P.x, 0, -o, 0, y_inner + o * FEMUR_THICK, 1, 0, 0, P.z, 0, 0, 0, 1)
+    # бедро прямой стороной наружу (файл Y=9 внутрь), широкий конец (файл X=−50) на оси бедра,
+    # отверстие (0,0,0) на оси колена
+    femur = Matrix(0, 0, -o, P.x, 0, -o, 0, y_inner + o * FEMUR_THICK, -1, 0, 0, P.z - FEMUR, 0, 0, 0, 1)
 
     shaft_f = V(0, TIB_SHAFT.y, zs * TIB_SHAFT.z)
     foot_f = V(0, TIB_FOOT.y, zs * TIB_FOOT.z)

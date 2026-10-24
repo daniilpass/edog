@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 .venv/
 *.secret
+# сборка прошивки XIAO (xiao/ota.py)
+xiao/build/
+# «Экспорт бинарника» Arduino IDE кладёт сборку рядом со скетчем
+xiao/firmware/edog/build/

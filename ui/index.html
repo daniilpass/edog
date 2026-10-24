@@ -13,7 +13,7 @@
 <header>
   <div class="brand">EDOG</div>
   <div class="status">
-    <form id="dog-form" class="dog-form" title="Адрес API собаки (Raspberry Pi)">
+    <form id="dog-form" class="dog-form" title="Адрес API собаки (Raspberry Pi или XIAO ESP32-S3)">
       <label>Собака <input id="dog-host" placeholder="192.168.50.129:8080" spellcheck="false"></label>
       <button>Подключить</button>
     </form>
@@ -24,6 +24,8 @@
   </div>
   <div class="header-actions">
     <span class="muted" id="cal-dirty"></span>
+    <button id="cal-load" title="calibration.json с Raspberry Pi или сохранённый раньше. Только при выключенных серво; потом — «Сохранить»">Загрузить из файла</button>
+    <input type="file" id="cal-file" accept=".json,application/json" hidden>
     <button id="cal-save" class="primary" title="Калибровка серво, «подключено», лимит тока и профиль шага — в calibration.json">Сохранить</button>
     <label class="switch" title="Подать/снять сигнал с серво">
       <input type="checkbox" id="torque"><span>Серво</span>
@@ -33,6 +35,7 @@
 </header>
 
 <main>
+  <div class="stage">
   <section class="viewer">
     <div id="scene"></div>
     <div class="overlay" id="overlay"></div>
@@ -47,6 +50,18 @@
     <div class="offline" id="offline" hidden>⚠ НЕТ СВЯЗИ С СОБАКОЙ<small id="offline-info">переподключение…</small></div>
     <div class="hint">Вращать — мышь/палец, клик по суставу — выбрать серво</div>
   </section>
+
+  <div class="card camera-card" id="camera-card" hidden>
+    <h2>Камера</h2>
+    <div class="camera">
+      <img id="cam-img" alt="Видео с камеры собаки">
+      <div class="camera-msg" id="cam-msg"></div>
+    </div>
+    <div class="row" id="cam-ask" hidden><span id="cam-ask-text"></span> <button id="cam-take">Переключить сюда</button></div>
+    <label class="row" title="Выключенное видео не грузит Wi-Fi собаки"><input type="checkbox" id="cam-on"> Показывать видео</label>
+    <div class="muted" id="cam-info"></div>
+  </div>
+  </div>
 
   <aside class="panel">
     <div class="card">
@@ -107,6 +122,16 @@
       <div class="muted" id="drive-info"></div>
     </div>
 
+    <div class="card" id="fw-card" hidden>
+      <h2>Прошивка платы</h2>
+      <div class="muted" id="fw-id"></div>
+      <div class="row">
+        <button id="fw-load" title="Файл edog.ino.bin: arduino-cli compile --export-binaries или python xiao/ota.py --build-only. Только при выключенных серво">Обновить прошивку…</button>
+        <input type="file" id="fw-file" accept=".bin" hidden>
+      </div>
+      <div class="muted" id="fw-info"></div>
+    </div>
+
     <div class="card" id="servo-detail">
       <h2>Тест и калибровка <span id="sd-name">—</span></h2>
       <div class="muted" id="sd-empty">Выберите сустав на модели или строку в таблице.</div>
@@ -165,8 +190,8 @@
     </div>
   </aside>
 
-  <section class="gamepad card">
-    <h2>Геймпад <span id="gp-state" class="pill">—</span></h2>
+  <details class="gamepad card">
+    <summary><h2>Геймпад <span id="gp-state" class="pill">—</span></h2></summary>
     <div class="gp-grid">
       <div>
         <div class="kv" id="gp-kv"></div>
@@ -201,7 +226,7 @@
         Если стики перепутаны — проверьте коды в <code>evtest</code> и поправьте <code>[gamepad.axes]</code> в config.toml.
         При потере связи собака останавливается и выравнивает корпус, поза сохраняется.</p>
     </details>
-  </section>
+  </details>
 
   <section class="servos">
     <table>
