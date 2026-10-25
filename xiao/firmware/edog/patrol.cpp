@@ -1,6 +1,5 @@
 #include "patrol.h"
 
-#include <Preferences.h>
 #include <esp_random.h>
 
 #include <atomic>
@@ -11,12 +10,10 @@
 #include "vision.h"
 
 // Состояния. ОСМОТР и ОТХОД поворачивают собаку через «поворот» — он помнит, куда идти дальше.
-enum State { OFF, COUNTDOWN, START, PAUSED, WALK, SCAN, TURN, APPROACH, GREET, LEAVE, BACKUP };
-static const char *const CODES[] = {"off", "countdown", "start", "paused", "walk", "scan",
-                                    "turn", "approach", "greet", "leave", "backup"};
-static const char *const TEXTS[] = {"выключен", "старт через", "кивок — начинаю", "пауза: управляет человек",
-                                    "иду", "осматриваюсь", "поворачиваю", "человек — подхожу", "приветствую",
-                                    "ухожу дальше", "отхожу назад"};
+enum State { OFF, START, WALK, SCAN, TURN, APPROACH, GREET, LEAVE, BACKUP };
+static const char *const CODES[] = {"off", "start", "walk", "scan", "turn", "approach", "greet", "leave", "backup"};
+static const char *const TEXTS[] = {"выключен", "кивок — начинаю", "иду", "осматриваюсь", "поворачиваю",
+                                    "человек — подхожу", "приветствую", "ухожу дальше", "отхожу назад"};
 
 static const int SECTORS = 16;                  // карта вокруг собаки: сектора по 22.5°, 0 — нос, + — по часовой
 static const double SECTOR_DEG = 360.0 / SECTORS;
@@ -30,7 +27,6 @@ static std::atomic<bool> active{false};
 static State state = OFF;
 static double since = 0;
 static std::string reason = "";
-static bool autostart = true;
 
 // ---------- вспомогательное ----------
 
@@ -151,7 +147,6 @@ static double turn_dps = PATROL_TURN_DPS;        // разворот на мес
 static double last_tick = 0;
 static uint32_t last_seq = 0, seen_presses = 0, seen_estops = 0;
 static bool api_activity = false;
-static double last_activity = 0, countdown_end = 0;
 static double cmd_vx = 0, cmd_turn = 0;          // что патруль велит сейчас
 
 // поворот
@@ -296,30 +291,6 @@ void patrol_toggle() {
 
 void patrol_user_activity() { api_activity = true; }
 
-void patrol_set_autostart(bool on) {
-  autostart = on;
-  Preferences p;
-  p.begin("edog", false);
-  p.putBool("patrol_auto", on);
-  p.end();
-}
-
-void patrol_autostart() {
-  if (!autostart) return;
-  RobotLock lock;
-  try {
-    if (!robot->enabled) robot->set_enabled(true);
-  } catch (const std::exception &e) {
-    Serial.printf("патруль: авто-старт не удался (%s)\n", e.what());
-    return;
-  }
-  snapshot();
-  countdown_end = now_s() + PATROL_COUNTDOWN_S;
-  heading = 0;
-  Serial.println("патруль: авто-старт после включения");
-  enter(COUNTDOWN);
-}
-
 // ---------- шаг автомата ----------
 
 static bool human_active() {
@@ -456,34 +427,21 @@ static void tick() {
     stop("обновление прошивки");
     return;
   }
+  // Человек взял управление — патруль выключается, обратно только кнопкой
   if (human_active()) {
-    last_activity = now;
-    if (state == COUNTDOWN) {
-      stop("старт отменён человеком");
-      return;
-    }
-    if (state != PAUSED) {
-      Serial.println("патруль: пауза — управляет человек");
-      enter(PAUSED);
-    }
+    stop("управляет человек");
+    return;
   }
 
   Perception p;
   if (vision_latest(p) && p.seq != last_seq) {
     last_seq = p.seq;
-    if (state != PAUSED && state != COUNTDOWN && state != START) on_perception(p, now);
+    if (state != START) on_perception(p, now);
     else map_observe(p, now);
   }
 
   cmd_vx = cmd_turn = 0;
   switch (state) {
-    case COUNTDOWN:
-      if (std::isnan(robot_still_since())) countdown_end = std::max(countdown_end, now + PATROL_COUNTDOWN_S);
-      if (now >= countdown_end) enter(START);
-      return;
-    case PAUSED:
-      if (now - last_activity >= PATROL_COUNTDOWN_S && !r.moving()) enter(START);
-      return;
     case START:
       if (greet_step == 0) {   // кивок: «начинаю»
         try {
@@ -601,11 +559,6 @@ static void patrol_task(void *) {
 
 void patrol_begin(Robot &r) {
   robot = &r;
-  Preferences p;
-  if (p.begin("edog", true)) {
-    autostart = p.getBool("patrol_auto", true);
-    p.end();
-  }
   // стек в PSRAM: внутренней памяти мало, а задача патруля во флеш не пишет
   xTaskCreatePinnedToCoreWithCaps(patrol_task, "patrol", 8192, nullptr, 2, nullptr, 1, MALLOC_CAP_SPIRAM);
 }
@@ -626,9 +579,6 @@ void patrol_state(JsonObject out) {
   out["state"] = CODES[state];
   out["text"] = TEXTS[state];
   if (!reason.empty()) out["reason"] = reason;
-  out["autostart"] = autostart;
-  if (state == COUNTDOWN) out["left_s"] = std::max(0.0, std::ceil(countdown_end - now));
-  if (state == PAUSED) out["left_s"] = std::max(0.0, std::ceil(last_activity + PATROL_COUNTDOWN_S - now));
   out["heading_deg"] = std::lround(wrap(heading));
   out["turn_dps"] = std::lround(turn_dps);
   out["wall"] = wall_mode;
@@ -660,10 +610,6 @@ int patrol_headers(char *buf, size_t cap) {
   RobotLock lock;
   double now = now_s();
   int n = snprintf(buf, cap, "X-Patrol: state=%s;greet=%d;heading=%ld", CODES[state], greetings, std::lround(wrap(heading)));
-  if (state == COUNTDOWN || state == PAUSED) {
-    double end = state == COUNTDOWN ? countdown_end : last_activity + PATROL_COUNTDOWN_S;
-    n += snprintf(buf + n, cap - n, ";left=%d", (int)std::max(0.0, std::ceil(end - now)));
-  }
   n += snprintf(buf + n, cap - n, "\r\nX-Map: f=%d", (int)vision_hfov_deg());
   double td = target_deg();
   if (std::isfinite(td)) n += snprintf(buf + n, cap - n, ";t=%ld", std::lround(td));

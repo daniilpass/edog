@@ -18,7 +18,7 @@ import org.json.JSONObject
 class BusyException : IOException("видео занято")
 
 // Собака по API платы XIAO: /api/config (порт и путь видео), /api/state (camera.viewer),
-// POST /api/camera/take, POST /api/patrol и MJPEG-поток /stream?id=.
+// POST /api/camera/take, POST /api/patrol, POST /api/gait и MJPEG-поток /stream?id=.
 class Dog(context: Context, address: String) {
     private val host: String
     private val port: Int
@@ -52,6 +52,15 @@ class Dog(context: Context, address: String) {
         val off = request("GET", "/api/state").optJSONObject("patrol")?.optString("state", "off") == "off"
         request("POST", "/api/patrol", JSONObject().put("action", if (off) "start" else "stop"))
         return off
+    }
+
+    // Стойка — профиль ходьбы: "base" или "base_stopper".
+    fun gait(): String = request("GET", "/api/state").optString("gait")
+
+    // Базовая ↔ базовая на стопперах. Возвращает новый профиль.
+    fun toggleGait(): String {
+        val next = if (gait() == "base_stopper") "base" else "base_stopper"
+        return request("POST", "/api/gait", JSONObject().put("name", next)).optString("gait", next)
     }
 
     // Читает поток, пока его не закроют; true — хотя бы один кадр пришёл. headers — заголовки кадра

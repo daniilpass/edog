@@ -32,6 +32,7 @@ class MainActivity : Activity() {
     private lateinit var message: TextView
     private lateinit var take: Button
     private lateinit var patrol: Button
+    private lateinit var stance: Button
     private lateinit var info: TextView
 
     private val prefs by lazy { getSharedPreferences("edog", Context.MODE_PRIVATE) }
@@ -86,9 +87,19 @@ class MainActivity : Activity() {
             alpha = 0.7f
             setOnClickListener { togglePatrol() }
         }
+        stance = Button(this).apply {
+            text = "Стойка"
+            alpha = 0.7f
+            setOnClickListener { toggleStance() }
+        }
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(patrol)
+            addView(stance)
+        }
         val overlay = FrameLayout(this).apply {
             addView(center, FrameLayout.LayoutParams(-1, -1))
-            addView(patrol, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
+            addView(buttons, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
             addView(info, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
             addView(settings, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
         }
@@ -186,6 +197,26 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    // Стойка: базовая ↔ базовая на стопперах.
+    private fun toggleStance() {
+        val d = dog ?: return toast("Нет связи с собакой")
+        stance.isEnabled = false
+        Thread {
+            val result = try {
+                val g = d.toggleGait()
+                ui { showStance(g) }
+                "Стойка: ${STANCE_NAMES[g] ?: g}"
+            } catch (e: IOException) {
+                "Стойка: ${e.message}"
+            }
+            ui { stance.isEnabled = true; toast(result) }
+        }.start()
+    }
+
+    private fun showStance(gait: String) {
+        stance.text = "Стойка: ${STANCE_NAMES[gait] ?: gait}"
+    }
+
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
 
     private fun startWorker() {
@@ -213,7 +244,8 @@ class MainActivity : Activity() {
                 }
                 val viewer = d.viewer()
                 if (viewer != 0L && viewer != myId && !askTake(d, watched)) return
-                ui { status("Подключение к видео…"); info.text = d.label }
+                val gait = d.gait()
+                ui { status("Подключение к видео…"); info.text = d.label; showStance(gait) }
                 watched = d.stream(myId) { bmp, headers ->
                     val v = Vision(headers)
                     ui {
@@ -285,5 +317,6 @@ class MainActivity : Activity() {
 
     companion object {
         const val DEFAULT_ADDRESS = "edog.local:8080"
+        val STANCE_NAMES = mapOf("base" to "базовая", "base_stopper" to "на стопперах")
     }
 }

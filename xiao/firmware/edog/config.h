@@ -39,7 +39,6 @@ static const double PERSON_HEIGHT_MM = 1650.0;     // рост для оценк
 static const double FREE_MAX_MM = 3000.0;          // свободное расстояние дальше этого — «далеко»
 
 // ---------- патруль ----------
-static const double PATROL_COUNTDOWN_S = 5.0;      // после включения и после паузы: столько ждать, потом кивок
 static const double PATROL_IGNORE_S = 18.0;        // после приветствия людей не замечать
 static const double PATROL_TURN_DPS = 45.0;        // скорость разворота на месте, °/с (уточняется по камере)
 static const double PATROL_SLIP = 0.7;             // доля расчётной скорости шага, которая доходит до пола

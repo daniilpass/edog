@@ -1,6 +1,7 @@
 #include "api.h"
 
 #include <Update.h>
+#include <esp_attr.h>
 #include <esp_http_server.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -148,9 +149,9 @@ static void route(httpd_method_t method, const std::string &path, const String &
   RobotLock lock;
   double a, b, c;
   std::string rest;
-  // Команда человека из портала ставит патруль на паузу (кроме самого патруля, зрения и видео).
+  // Команда человека из портала выключает патруль (кроме самого патруля, зрения, видео и смены стойки).
   if (method != HTTP_GET && !starts(path, "/api/patrol") && !starts(path, "/api/vision") && !starts(path, "/api/camera") &&
-      path != "/api/calibration/save")
+      path != "/api/calibration/save" && path != "/api/gait")
     patrol_user_activity();
 
   if (method == HTTP_GET) {
@@ -260,10 +261,6 @@ static void route(httpd_method_t method, const std::string &path, const String &
       r.update_power(num(req["limit_a"], "limit_a", a, 0, 50), num(req["servo_a"], "servo_a", b, 0, 5, true));
     } else if (path == "/api/trim") {
       r.update_trim(num(req["pitch_deg"], "pitch_deg", a, -10, 10), num(req["roll_deg"], "roll_deg", b, -10, 10));
-    } else if (path == "/api/patrol") {
-      // авто-старт патруля после включения питания (хранится в NVS сразу)
-      if (!req["autostart"].is<bool>()) throw HttpError{422, "autostart: нужно true/false"};
-      patrol_set_autostart(req["autostart"].as<bool>());
     } else if (path == "/api/vision") {
       // phase, phase_both, height_mm, tilt_deg (хранится в NVS сразу)
       vision_configure(req.as<JsonObjectConst>());
@@ -362,6 +359,39 @@ static esp_err_t bluetooth(httpd_req_t *req, const std::string &path) {
 // остаётся старая прошивка. На перезагрузке контур не держит ноги, поэтому включённые серво сначала
 // выключаются, как при деплое на Pi: собака встаёт в монтажное положение, потом сигнал снимается.
 
+// Состояние до прошивки по воздуху: RTC-память не стирается при программной перезагрузке.
+static const uint32_t RESUME_MAGIC = 0xED06A11E;
+struct Resume {
+  uint32_t magic;
+  bool enabled, patrol;
+  char gait[24];
+};
+static RTC_NOINIT_ATTR Resume resume;
+
+static void remember_state() {
+  resume.enabled = robot->enabled;
+  resume.patrol = patrol_active();
+  strlcpy(resume.gait, robot->gait_cfg().name, sizeof resume.gait);
+  resume.magic = RESUME_MAGIC;
+}
+
+bool api_resume_after_update() {
+  if (resume.magic != RESUME_MAGIC) return false;
+  resume.magic = 0;   // только один раз
+  if (esp_reset_reason() != ESP_RST_SW) return false;
+  RobotLock lock;
+  try {
+    robot->set_gait(resume.gait);
+    if (resume.patrol) patrol_start();   // включает и серво
+    else if (resume.enabled) robot->set_enabled(true);
+    Serial.printf("после прошивки: серво %s, стойка %s, патруль %s\n", resume.enabled ? "вкл" : "выкл", resume.gait,
+                  resume.patrol ? "вкл" : "выкл");
+  } catch (const std::exception &e) {
+    Serial.printf("после прошивки состояние не вернуть (%s)\n", e.what());
+  }
+  return true;
+}
+
 static void restart_task(void *) {
   delay(500);   // ответ успеть отправить
   ESP.restart();
@@ -371,7 +401,9 @@ static esp_err_t firmware_handler(httpd_req_t *req) {
   {
     RobotLock lock;
     if (robot->updating) return send_error(req, HttpError{409, "обновление прошивки уже идёт"});
+    remember_state();
     robot->updating = true;   // заодно не даёт включить серво до перезагрузки
+    if (patrol_active()) patrol_stop("обновление прошивки");
     if (robot->enabled) robot->set_enabled(false);
   }
   // Тело ждёт в сокете, пока собака встаёт: выключение укладывается в POWER_DOWN_TIMEOUT_S.
@@ -384,6 +416,7 @@ static esp_err_t firmware_handler(httpd_req_t *req) {
   }
   auto fail = [&](int code, const std::string &detail) {
     Update.abort();
+    resume.magic = 0;
     {
       RobotLock lock;
       robot->updating = false;

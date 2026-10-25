@@ -5,7 +5,8 @@
     python xiao/ota.py --bin xiao/build/edog.ino.bin   залить готовый файл без сборки
     python xiao/ota.py --build-only             только собрать: xiao/build/edog.ino.bin (для портала)
 
-Включённые серво выключаются перед загрузкой: собака встаёт в монтажное положение (как при деплое на Pi).
+Перед записью собака сама встаёт в монтажное положение и снимает сигнал с серво, а после перезагрузки
+возвращается как была: серво, стойка, патруль.
 Если запись оборвалась или образ битый, плата остаётся на старой прошивке.
 Коды выхода: 0 — новая прошивка работает, 1 — нет (причина в выводе).
 Зависимостей нет, кроме arduino-cli с ядром esp32 и библиотеками (см. xiao/README.md).
@@ -27,7 +28,6 @@ BUILD = ROOT / "build"
 FQBN = "esp32:esp32:XIAO_ESP32S3:PSRAM=opi"
 CLI_FALLBACK = Path(r"C:\Program Files\Arduino CLI\arduino-cli.exe")
 BOOT_TIMEOUT_S = 60
-POWER_DOWN_WAIT_S = 10   # на собаке выключение не дольше 5 с (POWER_DOWN_TIMEOUT_S)
 
 
 def fail(msg: str) -> None:
@@ -82,23 +82,10 @@ def main() -> None:
     api = f"http://{args.dog}"
     try:
         root = get(api + "/")
-        state = get(api + "/api/state")
     except (urllib.error.URLError, OSError) as e:
         fail(f"собака {args.dog} не отвечает ({e}). Включена? Верный адрес? Можно указать IP: --dog <ip>:8080")
     if "firmware" not in root:
         fail(f"{args.dog} — не XIAO с прошивкой по воздуху ({root.get('board', 'это Raspberry Pi?')})")
-    if state.get("enabled"):
-        # Как при деплое на Pi: собака встаёт в монтажное положение, потом сигнал снимается.
-        # Новая прошивка делает это и сама, прежняя без этого не примет обновление.
-        print("Серво включены: собака встаёт в монтажное положение …")
-        req = urllib.request.Request(api + "/api/enable", data=json.dumps({"enabled": False}).encode(),
-                                     method="POST", headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=5).close()
-        deadline = time.monotonic() + POWER_DOWN_WAIT_S
-        while get(api + "/api/state").get("enabled"):
-            if time.monotonic() > deadline:
-                fail(f"серво не выключились за {POWER_DOWN_WAIT_S} с")
-            time.sleep(0.3)
     old = root["firmware"]
     print(f"Собака {args.dog}: прошивка {old}")
 

@@ -8,3 +8,5 @@ __pycache__/
 xiao/build/
 # «Экспорт бинарника» Arduino IDE кладёт сборку рядом со скетчем
 xiao/firmware/edog/build/
+# сохранённые прошивки для отката
+xiao/backup/

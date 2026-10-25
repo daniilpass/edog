@@ -71,7 +71,7 @@ class MjpegView(context: Context) : View(context) {
         }
         var line = 0
         fun status(s: String) = label(canvas, s, dst.left + 8 * density, dst.top + (22 + 22 * line++) * density)
-        Vision.STATE_NAMES[v.state]?.let { status(it + (v.left?.let { s -> " $s с" } ?: "")) }
+        Vision.STATE_NAMES[v.state]?.let { status(it) }
         status(String.format("близко: %.2f", v.close) + if (v.close > 0.7f) " — почти упёрлась" else "")
     }
 

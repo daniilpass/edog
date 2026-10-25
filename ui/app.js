@@ -234,7 +234,7 @@ const camId = 1 + Math.floor(Math.random() * 0x7fffffff);
 let camUrl = null, camStarted = 0, camMode = 'off';
 let camAbort = null, camFrame = null, camHeaders = {}, camPicking = false;
 const PATROL_NAMES = {
-  off: 'патруль выключен', countdown: 'старт через', start: 'кивок — начинаю', paused: 'пауза: управляет человек',
+  off: 'патруль выключен', start: 'кивок — начинаю',
   walk: 'иду', scan: 'осматриваюсь', turn: 'поворачиваю', approach: 'человек — подхожу', greet: 'приветствую',
   leave: 'ухожу дальше', backup: 'отхожу назад',
 };
@@ -415,7 +415,7 @@ function drawCam() {
   const kv = text => Object.fromEntries((text ?? '').split(';').filter(Boolean).map(p => p.split('=')));
   const patrol = kv(h['x-patrol']), vis = kv(h['x-vision']);
   const lines = [];
-  if (patrol.state) lines.push(PATROL_NAMES[patrol.state] + (patrol.left ? ` ${patrol.left} с` : ''));
+  if (patrol.state) lines.push(PATROL_NAMES[patrol.state]);
   if (vis.close) lines.push(`близко: ${Number(vis.close).toFixed(2)}${Number(vis.close) > 0.7 ? ' — почти упёрлась' : ''}`);
   if (vis.age && Number(vis.age) > 1500) lines.push(`анализ ${(Number(vis.age) / 1000).toFixed(1)} с назад`);
   lines.forEach((t, i) => label(ctx, t, 8, 26 + i * 26));
@@ -497,8 +497,6 @@ function setupPatrol() {
   if (!config.camera?.ok) return;
   $('patrol-card').hidden = $('vision-card').hidden = $('radar-card').hidden = false;
   $('patrol-toggle').onclick = () => api('POST', '/api/patrol', { action: state?.patrol?.state === 'off' ? 'start' : 'stop' });
-  $('patrol-auto').onchange = e => api('PATCH', '/api/patrol', { autostart: e.target.checked })
-    .then(() => toast(e.target.checked ? 'Патруль начнётся сам после включения питания' : 'Авто-старт патруля выключен'));
   $('vis-phase-scan').onclick = () => api('POST', '/api/vision/phase_scan', { seconds: 20 })
     .then(() => toast('Подбор фазы: 20 с — пусть собака идёт вперёд'));
   $('vis-floor-pick').onclick = () => {
@@ -518,9 +516,8 @@ function renderPatrol(p) {
   const on = p.state !== 'off';
   $('patrol-toggle').textContent = on ? 'Остановить патруль' : 'Запустить патруль';
   $('patrol-toggle').classList.toggle('primary', !on);
-  if (document.activeElement !== $('patrol-auto')) $('patrol-auto').checked = p.autostart;
   $('patrol-state').textContent = (on ? 'Патруль: ' : '') + (PATROL_NAMES[p.state] ?? p.state)
-    + (p.left_s !== undefined ? ` ${p.left_s} с` : '') + (p.wall ? ' · вдоль стены' : '');
+    + (p.wall ? ' · вдоль стены' : '');
   $('patrol-info').textContent = [
     !on && p.reason && `причина: ${p.reason}`,
     `приветствий ${p.greetings} · осмотров ${p.scans} · упиралась ${p.stucks}`,
@@ -657,7 +654,7 @@ function drawRadar(p) {
   ctx.fill();
   const near = map.cm.map((cm, i) => [cm, i]).filter(([cm]) => cm >= 0).sort((a, b) => a[0] - b[0])[0];
   const deg = i => Math.round(i * step > 180 ? i * step - 360 : i * step);
-  $('radar-text').textContent = `${PATROL_NAMES[p.state]}${p.left_s !== undefined ? ` ${p.left_s} с` : ''}`
+  $('radar-text').textContent = PATROL_NAMES[p.state]
     + (near ? ` · ближе всего ${metres(near[0])} (${deg(near[1])}°)` : ' · вокруг пока ничего не видно')
     + (map.people.length ? ` · людей: ${map.people.length}` : '');
 }

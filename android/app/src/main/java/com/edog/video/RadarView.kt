@@ -115,7 +115,7 @@ class RadarView(context: Context) : View(context) {
         canvas.drawRect(cx - 5 * density, cy - 10 * density, cx + 5 * density, cy + 10 * density, bold)
         // текстом
         val near = v.mapCm.withIndex().filter { it.value >= 0 }.minByOrNull { it.value }
-        val state = (Vision.STATE_NAMES[v.state] ?: "") + (v.left?.let { " $it с" } ?: "")
+        val state = Vision.STATE_NAMES[v.state] ?: ""
         canvas.drawText(state, 8 * density, size + 16 * density, bold)
         val deg = near?.let { val a = it.index * step; (if (a > 180) a - 360 else a).toInt() }
         val info = (if (near != null) "ближе всего ${Vision.metres(near.value)} ($deg°)" else "вокруг пока ничего не видно") +

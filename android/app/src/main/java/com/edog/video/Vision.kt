@@ -16,7 +16,6 @@ class Vision(h: Map<String, String>) {
     val tiltDeg: Float
     val fovDeg: Float
     val state: String                // состояние патруля: off, walk, scan…
-    val left: Int?                   // секунд до старта / до продолжения
     val greetings: Int
     val mapCm: List<Int>             // карта вокруг: 16 секторов по 22.5°, 0 — нос, по часовой; −1 — неизвестно
     val mapAge: List<Int>            // сколько секунд назад видели сектор
@@ -37,7 +36,6 @@ class Vision(h: Map<String, String>) {
         fovDeg = vis["fov"]?.toFloatOrNull() ?: 56f
         val patrol = pairs(h["x-patrol"])
         state = patrol["state"] ?: ""
-        left = patrol["left"]?.toIntOrNull()
         greetings = patrol["greet"]?.toIntOrNull() ?: 0
         val map = pairs(h["x-map"])
         mapCm = (map["d"] ?: "").split(',').mapNotNull { it.toIntOrNull() }
@@ -61,8 +59,8 @@ class Vision(h: Map<String, String>) {
 
     companion object {
         val STATE_NAMES = mapOf(
-            "off" to "патруль выключен", "countdown" to "старт через", "start" to "кивок — начинаю",
-            "paused" to "пауза: управляет человек", "walk" to "иду", "scan" to "осматриваюсь",
+            "off" to "патруль выключен", "start" to "кивок — начинаю",
+            "walk" to "иду", "scan" to "осматриваюсь",
             "turn" to "поворачиваю", "approach" to "человек — подхожу", "greet" to "приветствую",
             "leave" to "ухожу дальше", "backup" to "отхожу назад",
         )
