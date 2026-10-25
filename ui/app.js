@@ -330,13 +330,15 @@ async function camTake() {
   $('cam-take').disabled = false;
 }
 
-// Строка кадра 640×480, на которой лежит точка пола на расстоянии mm (геометрия камеры из состояния собаки).
+// Строка кадра 640×480, на которой лежит точка пола на расстоянии mm. Геометрия камеры — из заголовка кадра
+// (высота камеры зависит от стойки), без него — из состояния собаки.
 function floorRow(mm) {
+  const vis = Object.fromEntries((camHeaders['x-vision'] ?? '').split(';').filter(Boolean).map(p => p.split('=')));
   const fl = state?.vision?.floor;
-  if (!fl) return null;
-  const f = 320 / Math.tan((state.patrol?.map?.fov_deg ?? 56) / 2 * Math.PI / 180);
-  const a = Math.atan(fl.height_mm / mm) - fl.tilt_deg * Math.PI / 180;
-  return 240 + f * Math.tan(a);
+  const h = Number(vis.h ?? fl?.height_mm), tilt = Number(vis.tilt ?? fl?.tilt_deg), fov = Number(vis.fov ?? 56);
+  if (!h || !Number.isFinite(tilt)) return null;
+  const f = 320 / Math.tan(fov / 2 * Math.PI / 180);
+  return 240 + f * Math.tan(Math.atan(h / mm) - tilt * Math.PI / 180);
 }
 
 const metres = cm => cm < 0 ? '?' : cm >= 300 ? 'далеко' : `${(cm / 100).toFixed(1).replace('.', ',')} м`;
@@ -355,7 +357,27 @@ function drawCam() {
   const c = $('cam-canvas'), ctx = c.getContext('2d');
   if (!camFrame) return;
   ctx.drawImage(camFrame, 0, 0, c.width, c.height);
-  if (!$('cam-overlay').checked) return;
+  if (!$('cam-overlay').checked && !camPicking) return;
+  // центр кадра: вертикаль и крестик — по ним ставить предмет при калибровке пола
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 6]);
+  ctx.beginPath();
+  ctx.moveTo(320, 0);
+  ctx.lineTo(320, 480);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(300, 240); ctx.lineTo(340, 240);
+  ctx.moveTo(320, 220); ctx.lineTo(320, 260);
+  ctx.stroke();
+  ctx.restore();
+  if (!$('cam-overlay').checked) {   // калибровка без разметки — только центр и подсказка
+    label(ctx, `кликните по низу предмета на ${$('vis-floor-mm').value} мм`, 8, 470);
+    return;
+  }
   const h = camHeaders;
   // граница свободного пола по 16 полосам — пунктир
   const free = (h['x-free'] ?? '').split(',').filter(Boolean).map(Number);
@@ -486,8 +508,8 @@ function setupPatrol() {
     if (camPicking) toast('Кликните на видео по низу предмета, где он касается пола');
     drawCam();
   };
-  $('vis-apply').onclick = () => api('PATCH', '/api/vision', { height_mm: Number($('vis-h').value), tilt_deg: Number($('vis-tilt').value) })
-    .then(() => toast('Высота и наклон камеры применены'));
+  $('vis-apply').onclick = () => api('PATCH', '/api/vision', { height_mm: Number($('vis-h').value) })
+    .then(s => toast(`Высота ${s.vision.floor.height_mm} мм; по точкам: наклон ${s.vision.floor.tilt_deg}°, угол обзора ${s.vision.floor.hfov_deg}°`));
   $('vis-floor-reset').onclick = () => api('POST', '/api/vision/floor_reset').then(() => toast('Калибровка пола сброшена'));
 }
 
@@ -522,10 +544,10 @@ function renderVision(v) {
     : sc.best !== undefined ? `выбрана ${sc.best.toFixed(3)} · разница по фазам ${bins.join(', ')}` : '';
   $('vis-phase-scan').disabled = sc.active;
   const fl = v.floor;
-  $('vis-floor').textContent = `камера ${fl.height_mm} мм над полом, наклон ${fl.tilt_deg}° · ближе ${(fl.blind_mm / 10).toFixed(0)} см пол не виден`
+  $('vis-floor').textContent = `камера ${fl.height_mm} мм над полом${fl.height_measured ? ' (измерено)' : ' (оценка)'}, наклон ${fl.tilt_deg}°,`
+    + ` угол обзора ${fl.hfov_deg}° · ближе ${(fl.blind_mm / 10).toFixed(0)} см пол не виден`
     + ` · точек калибровки ${fl.points?.length ?? 0}${fl.model ? '' : ' · пол ещё не распознан'}`;
-  for (const [id, val] of [['vis-h', fl.height_mm], ['vis-tilt', fl.tilt_deg]])
-    if (document.activeElement !== $(id)) $(id).value = val;
+  if (document.activeElement !== $('vis-h')) $('vis-h').value = fl.height_mm;
 }
 
 // Радар: вид сверху, собака в центре, нос вверх, по часовой — вправо. Радиус — 3 м.

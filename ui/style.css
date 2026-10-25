@@ -100,18 +100,24 @@ main {
   grid-template-columns: minmax(0, 1fr) 340px;
   /* Правая панель бывает выше левой колонки (камера, раскрытая калибровка): лишняя высота уходит
      в пустую последнюю строку, а не зазорами между видом, геймпадом и таблицей серво. */
-  grid-template-areas: "viewer panel" "gamepad panel" "servos panel" ". panel";
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-areas: "stage panel" "model panel" "gamepad panel" "servos panel" ". panel";
+  grid-template-rows: auto auto auto auto 1fr;
   align-items: start;
   gap: 16px;
   padding: 16px;
   max-width: 1500px;
   margin: 0 auto;
 }
-/* 3D-вид и камера (если есть) делят строку пополам и одной высоты. */
-.stage { grid-area: viewer; display: flex; gap: 16px; height: min(62vh, 620px); min-width: 0; }
+/* Камера и радар (если есть на плате) в одной строке; без них строки нет. */
+.stage { grid-area: stage; display: flex; gap: 16px; height: min(62vh, 620px); min-width: 0; }
+.stage:not(:has(> .card:not([hidden]))) { display: none; }
+/* 3D-модель под камерой, сворачивается. */
+.model { grid-area: model; min-width: 0; }
+.model > summary { margin: 0; }
+.model > summary h2 { display: inline; margin: 0; }
+.model[open] > summary { margin-bottom: 10px; }
 .viewer {
-  flex: 1 1 0; min-width: 0; position: relative;
+  height: min(62vh, 620px); min-width: 0; position: relative;
   background: var(--scene); border: 1px solid var(--border); border-radius: 10px;
   overflow: hidden;
 }
@@ -214,9 +220,9 @@ table.mapping td:first-child { color: var(--muted); }
 code { background: var(--surface-2); padding: 1px 4px; border-radius: 4px; font-size: 12px; }
 
 @media (max-width: 900px) {
-  main { grid-template-columns: 1fr; grid-template-areas: "viewer" "panel" "gamepad" "servos"; grid-template-rows: none; padding: 16px; }
+  main { grid-template-columns: 1fr; grid-template-areas: "stage" "model" "panel" "gamepad" "servos"; grid-template-rows: none; padding: 16px; }
   .stage { flex-direction: column; height: auto; }
-  .viewer { flex: none; height: 50vh; }
+  .viewer { height: 50vh; }
   .camera-card { flex: none; }
   .camera-card .camera { flex: none; aspect-ratio: 4 / 3; }
   .radar-card { flex: none; }

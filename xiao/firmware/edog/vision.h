@@ -36,6 +36,7 @@ struct Perception {
   double dt = 0;             // время с прошлого синхронного кадра, с
   bool stagnant = false;     // на ходу вперёд кадр не меняется третий раз подряд — упёрлась
   bool floor_known = false;
+  double h_mm = 0, tilt_deg = 0;   // геометрия камеры на этом кадре (высота — по высоте корпуса)
   float thumb[THUMB_W * THUMB_H];   // нормированная миниатюра для памяти мест
 };
 

@@ -18,6 +18,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import java.io.IOException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -30,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var radar: RadarView
     private lateinit var message: TextView
     private lateinit var take: Button
+    private lateinit var patrol: Button
     private lateinit var info: TextView
 
     private val prefs by lazy { getSharedPreferences("edog", Context.MODE_PRIVATE) }
@@ -79,8 +81,14 @@ class MainActivity : Activity() {
             alpha = 0.7f
             setOnClickListener { editAddress() }
         }
+        patrol = Button(this).apply {
+            text = "Патруль"
+            alpha = 0.7f
+            setOnClickListener { togglePatrol() }
+        }
         val overlay = FrameLayout(this).apply {
             addView(center, FrameLayout.LayoutParams(-1, -1))
+            addView(patrol, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
             addView(info, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
             addView(settings, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
         }
@@ -164,6 +172,22 @@ class MainActivity : Activity() {
             .show()
     }
 
+    // Запустить или остановить патруль. Надпись на кнопке потом поправит состояние из кадров видео.
+    private fun togglePatrol() {
+        val d = dog ?: return toast("Нет связи с собакой")
+        patrol.isEnabled = false
+        Thread {
+            val result = try {
+                if (d.togglePatrol()) "Патруль запущен" else "Патруль остановлен"
+            } catch (e: IOException) {
+                "Патруль: ${e.message}"
+            }
+            ui { patrol.isEnabled = true; toast(result) }
+        }.start()
+    }
+
+    private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+
     private fun startWorker() {
         answers.clear()
         worker = Thread(::run, "video").also { it.start() }
@@ -195,6 +219,7 @@ class MainActivity : Activity() {
                     ui {
                         status("")
                         video.show(bmp, v)
+                        if (v.state.isNotEmpty()) patrol.text = if (v.state == "off") "Запустить патруль" else "Остановить патруль"
                         radar.show(v)
                         radar.visibility = if (v.hasMap) View.VISIBLE else View.GONE
                     }

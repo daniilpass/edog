@@ -83,10 +83,12 @@ struct Motion {
   bool walking = false;
   bool still = false;    // стоит неподвижно: не идёт, нет движения, серво дошли до целей
   double vx = 0, turn = 0;
+  double body_mm = 0;    // высота оси бедра над полом: от неё зависит высота камеры
 };
 // Ближайшая к t запись контура за последние ~0.6 с; false — такой давней записи нет.
 bool robot_motion_at(double t, Motion &out);
 double robot_still_since();   // с какого времени стоит неподвижно; NAN — сейчас не стоит
+double robot_body_mm();       // высота корпуса по последней записи контура (и когда контур ждёт замка)
 
 // Что знает о геймпаде портал.
 struct PadInfo {

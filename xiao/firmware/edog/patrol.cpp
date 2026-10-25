@@ -550,8 +550,7 @@ static void tick() {
       if (greet_step == 0) {
         double still = robot_still_since();
         if (!std::isnan(still) && now - still > 0.3) {
-          static const char *const MOVES_GREET[] = {"joy", "wag", "bow"};
-          const char *m = MOVES_GREET[esp_random() % 3];
+          const char *m = "joy";
           try {
             r.start_move(m);
             Serial.printf("патруль: приветствие — %s\n", m);

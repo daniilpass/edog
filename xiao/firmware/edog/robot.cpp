@@ -81,6 +81,13 @@ bool robot_motion_at(double t, Motion &out) {
   return true;
 }
 
+double robot_body_mm() {
+  portENTER_CRITICAL(&motion_mux);
+  double b = motion_log[(motion_head + MOTION_LOG - 1) % MOTION_LOG].body_mm;
+  portEXIT_CRITICAL(&motion_mux);
+  return b;
+}
+
 double robot_still_since() {
   portENTER_CRITICAL(&motion_mux);
   double s = still_since;
@@ -992,6 +999,8 @@ void Robot::record_motion() {
   m.cycles = cycles_;
   m.gait_hz = gait().gait_hz;
   m.walking = walking_ && enabled && !demo_;
+  // на ходу корпус на высоте профиля, стоя — на высоте позы (стойка профиля — та же)
+  m.body_mm = walking_ ? gait_height(gait(), body_.height) : body_.height;
   drive(m.vx, m.turn, nullptr);
   // без сигнала серво собака лежит неподвижно — для камеры это тоже «стоит»
   m.still = !demo_ && (!enabled || (!walking_ && move_name_.empty() && std::isnan(powering_down_) && settled()));

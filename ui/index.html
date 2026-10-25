@@ -36,21 +36,6 @@
 
 <main>
   <div class="stage">
-  <section class="viewer">
-    <div id="scene"></div>
-    <div class="overlay" id="overlay"></div>
-    <div class="viewer-toggles">
-      <label class="viewer-toggle" title="Низ средней перекладины рамы: узел колена держится ниже неё на запас">
-        <input type="checkbox" id="show-plane"> Плоскость рамы
-      </label>
-      <label class="viewer-toggle" title="Корпус неподвижно висит в воздухе, двигаются только ноги">
-        <input type="checkbox" id="static-body"> Тело на стенде
-      </label>
-    </div>
-    <div class="offline" id="offline" hidden>⚠ НЕТ СВЯЗИ С СОБАКОЙ<small id="offline-info">переподключение…</small></div>
-    <div class="hint">Вращать — мышь/палец, клик по суставу — выбрать серво</div>
-  </section>
-
   <div class="card camera-card" id="camera-card" hidden>
     <h2>Камера</h2>
     <div class="camera">
@@ -73,6 +58,24 @@
       штрих и «?» — не знаем; ◆ — человек; рамка с вершиной у собаки — что видит камера; стрелка — куда идёт.</div>
   </div>
   </div>
+
+  <details class="model card" open>
+    <summary><h2>3D-модель</h2></summary>
+    <section class="viewer">
+      <div id="scene"></div>
+      <div class="overlay" id="overlay"></div>
+      <div class="viewer-toggles">
+        <label class="viewer-toggle" title="Низ средней перекладины рамы: узел колена держится ниже неё на запас">
+          <input type="checkbox" id="show-plane"> Плоскость рамы
+        </label>
+        <label class="viewer-toggle" title="Корпус неподвижно висит в воздухе, двигаются только ноги">
+          <input type="checkbox" id="static-body"> Тело на стенде
+        </label>
+      </div>
+      <div class="offline" id="offline" hidden>⚠ НЕТ СВЯЗИ С СОБАКОЙ<small id="offline-info">переподключение…</small></div>
+      <div class="hint">Вращать — мышь/палец, клик по суставу — выбрать серво</div>
+    </section>
+  </details>
 
   <aside class="panel">
     <div class="card" id="patrol-card" hidden>
@@ -99,18 +102,15 @@
       </div>
       <h3>Пол: расстояние по кадру</h3>
       <div class="muted" id="vis-floor"></div>
+      <div class="row">высота объектива над полом
+        <input type="number" id="vis-h" min="30" max="400" step="1" class="narrow"> мм
+        <button id="vis-apply" title="Измерьте рулеткой в стойке. С измеренной высотой по точкам подбираются наклон и угол обзора камеры">Задать (измерено)</button>
+      </div>
       <div class="row">поставьте предмет на
         <input type="number" id="vis-floor-mm" value="500" min="100" max="5000" step="50" class="narrow"> мм от камеры
         <button id="vis-floor-pick" title="Затем кликните на видео точно по низу предмета, где он касается пола. 2–3 точки на разных расстояниях — точнее">Указать на видео</button>
       </div>
-      <details>
-        <summary>Высота и наклон вручную</summary>
-        <div class="calib">
-          <label>Высота камеры, мм <input type="number" id="vis-h" min="30" max="400" step="1"></label>
-          <label>Наклон вниз, ° <input type="number" id="vis-tilt" min="-20" max="70" step="0.5"></label>
-        </div>
-        <div class="row"><button id="vis-apply">Применить</button><button id="vis-floor-reset">Сбросить калибровку</button></div>
-      </details>
+      <div class="row"><button id="vis-floor-reset" title="Высота, наклон, угол обзора и точки — к начальным значениям">Сбросить калибровку пола</button></div>
     </div>
 
     <div class="card">

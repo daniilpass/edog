@@ -26,13 +26,19 @@ static const int PHASE_BINS = 16;
 
 // ---------- настройки (NVS «vision») ----------
 
-struct FloorPoint { double y, mm; };
+// Точка калибровки пола: низ предмета на строке y стоит в mm от камеры; body — высота корпуса в этот момент.
+struct FloorPoint { double y, mm, body; };
 
 struct VisionCfg {
   double phase = VISION_PHASE;
   bool phase_both = VISION_PHASE_BOTH;
+  // Камера жёстко на корпусе: высота камеры задана при высоте корпуса ref_body_mm, в другой стойке
+  // (другой профиль шага) она выше или ниже ровно на разницу высот корпуса.
   double height_mm = CAMERA_HEIGHT_MM;
+  double ref_body_mm = STAND_HEIGHT_MM;
   double tilt_deg = CAMERA_TILT_DEG;
+  double hfov_deg = CAMERA_HFOV_DEG;   // угол обзора по горизонтали: уточняется по точкам при измеренной высоте
+  bool height_measured = false;        // высота камеры измерена рулеткой — по точкам ищутся наклон и угол обзора
   std::vector<FloorPoint> points;
 };
 
@@ -43,21 +49,26 @@ struct Lock {
   ~Lock() { xSemaphoreGive(lock); }
 };
 
-static double focal_px() { return (FW / 2.0) / std::tan(CAMERA_HFOV_DEG / 2 * M_PI / 180); }
-double vision_hfov_deg() { return CAMERA_HFOV_DEG; }
+static double focal_px() { return (FW / 2.0) / std::tan(cfg.hfov_deg / 2 * M_PI / 180); }
+double vision_hfov_deg() { return cfg.hfov_deg; }
 double vision_bearing_deg(double x) { return std::atan((x - FW / 2.0) / focal_px()) * 180 / M_PI; }
 double vision_col_bearing_deg(int col) { return vision_bearing_deg((col + 0.5) * FW / FREE_COLS); }
 
-// Строка кадра (0 … 480) → расстояние по полу, мм; INFINITY — выше горизонта.
-static double row_to_mm(double y, double h, double tilt_deg) {
-  double a = std::atan((y - FH / 2.0) / focal_px()) + tilt_deg * M_PI / 180;
+// Высота камеры над полом при высоте корпуса body (под замком).
+static double cam_height(double body) { return cfg.height_mm + (body > 0 ? body - cfg.ref_body_mm : 0); }
+
+static double current_body() { return robot_body_mm(); }
+
+// Строка кадра (0 … 480) → расстояние по полу, мм; INFINITY — выше горизонта. f — фокус в пикселях.
+static double row_to_mm(double y, double h, double tilt_deg, double f) {
+  double a = std::atan((y - FH / 2.0) / f) + tilt_deg * M_PI / 180;
   if (a < 0.5 * M_PI / 180) return INFINITY;
   return h / std::tan(a);
 }
 
 // Наклон, при котором низ предмета на строке y стоит на расстоянии mm (высота h известна).
-static double tilt_for(double y, double mm, double h) {
-  return (std::atan(h / mm) - std::atan((y - FH / 2.0) / focal_px())) * 180 / M_PI;
+static double tilt_for(double y, double mm, double h, double f) {
+  return (std::atan(h / mm) - std::atan((y - FH / 2.0) / f)) * 180 / M_PI;
 }
 
 static void save_cfg() {
@@ -65,11 +76,15 @@ static void save_cfg() {
   doc["phase"] = cfg.phase;
   doc["phase_both"] = cfg.phase_both;
   doc["height_mm"] = cfg.height_mm;
+  doc["ref_body_mm"] = cfg.ref_body_mm;
   doc["tilt_deg"] = cfg.tilt_deg;
+  doc["hfov_deg"] = cfg.hfov_deg;
+  doc["height_measured"] = cfg.height_measured;
   for (const FloorPoint &p : cfg.points) {
     JsonArray a = doc["points"].add<JsonArray>();
     a.add(p.y);
     a.add(p.mm);
+    a.add(p.body);
   }
   String json;
   serializeJson(doc, json);
@@ -89,28 +104,52 @@ static void load_cfg() {
   cfg.phase = doc["phase"] | cfg.phase;
   cfg.phase_both = doc["phase_both"] | cfg.phase_both;
   cfg.height_mm = doc["height_mm"] | cfg.height_mm;
+  cfg.ref_body_mm = doc["ref_body_mm"] | cfg.ref_body_mm;
   cfg.tilt_deg = doc["tilt_deg"] | cfg.tilt_deg;
-  for (JsonArrayConst a : doc["points"].as<JsonArrayConst>()) cfg.points.push_back({a[0], a[1]});
+  cfg.hfov_deg = doc["hfov_deg"] | cfg.hfov_deg;
+  cfg.height_measured = doc["height_measured"] | cfg.height_measured;
+  for (JsonArrayConst a : doc["points"].as<JsonArrayConst>())
+    cfg.points.push_back({a[0], a[1], a[2] | cfg.ref_body_mm});
 }
 
-// Высота и наклон камеры по точкам калибровки: одна точка — только наклон, две и больше — оба
-// (перебор высоты, наклон — среднее по точкам, ошибка — относительная по расстоянию).
+// Камера по точкам калибровки (ошибка — относительная по расстоянию). Точки из другой стойки сдвигаются
+// на разницу высот корпуса; высота считается при высоте корпуса первой точки.
+//   высота измерена: одна точка — наклон; две и больше — наклон и угол обзора (перебор угла);
+//   не измерена: одна точка — наклон; две и больше — высота и наклон (перебор высоты).
 static void solve_floor() {
   if (cfg.points.empty()) return;
-  if (cfg.points.size() == 1) {
-    cfg.tilt_deg = tilt_for(cfg.points[0].y, cfg.points[0].mm, cfg.height_mm);
-    return;
-  }
-  double best = INFINITY;
-  for (double h = 40; h <= 300; h += 1) {
-    double tilt = 0;
-    for (const FloorPoint &p : cfg.points) tilt += tilt_for(p.y, p.mm, h);
+  double ref = cfg.points[0].body;
+  cfg.height_mm = cam_height(ref);
+  cfg.ref_body_mm = ref;
+  auto fit = [&](double h, double f, double &tilt) {   // наклон — среднее по точкам; ошибка
+    tilt = 0;
+    for (const FloorPoint &p : cfg.points) tilt += tilt_for(p.y, p.mm, h + p.body - ref, f);
     tilt /= cfg.points.size();
     double err = 0;
     for (const FloorPoint &p : cfg.points) {
-      double d = row_to_mm(p.y, h, tilt);
+      double d = row_to_mm(p.y, h + p.body - ref, tilt, f);
       err += std::isfinite(d) ? std::pow((d - p.mm) / p.mm, 2) : 1e6;
     }
+    return err;
+  };
+  if (cfg.points.size() == 1) {
+    fit(cfg.height_mm, focal_px(), cfg.tilt_deg);
+    return;
+  }
+  double best = INFINITY, tilt;
+  if (cfg.height_measured) {
+    for (double fov = 40; fov <= 120; fov += 0.1) {
+      double err = fit(cfg.height_mm, (FW / 2.0) / std::tan(fov / 2 * M_PI / 180), tilt);
+      if (err < best) {
+        best = err;
+        cfg.hfov_deg = fov;
+        cfg.tilt_deg = tilt;
+      }
+    }
+    return;
+  }
+  for (double h = 40; h <= 300; h += 1) {
+    double err = fit(h, focal_px(), tilt);
     if (err < best) {
       best = err;
       cfg.height_mm = h;
@@ -122,9 +161,9 @@ static void solve_floor() {
 void vision_floor_point(double y, double mm) {
   if (!(0 <= y && y < FH)) throw ValueError("строка: 0 … 479");
   if (!(100 <= mm && mm <= 5000)) throw ValueError("расстояние: 100 … 5000 мм");
-  if (y <= FH / 2.0) throw ValueError("точка выше середины кадра: нужен низ предмета на полу");
+  double body = current_body();
   Lock l;
-  cfg.points.push_back({y, mm});
+  cfg.points.push_back({y, mm, body > 0 ? body : cfg.ref_body_mm});
   if (cfg.points.size() > 6) cfg.points.erase(cfg.points.begin());
   solve_floor();
   save_cfg();
@@ -134,11 +173,15 @@ void vision_floor_reset() {
   Lock l;
   cfg.points.clear();
   cfg.height_mm = CAMERA_HEIGHT_MM;
+  cfg.ref_body_mm = STAND_HEIGHT_MM;
   cfg.tilt_deg = CAMERA_TILT_DEG;
+  cfg.hfov_deg = CAMERA_HFOV_DEG;
+  cfg.height_measured = false;
   save_cfg();
 }
 
 void vision_configure(JsonObjectConst f) {
+  double body = current_body();
   Lock l;
   VisionCfg c = cfg;
   if (!f["phase"].isNull()) {
@@ -151,8 +194,10 @@ void vision_configure(JsonObjectConst f) {
   }
   if (!f["height_mm"].isNull()) {
     if (!f["height_mm"].is<double>() || f["height_mm"] < 30 || f["height_mm"] > 400) throw ValueError("height_mm: 30 … 400");
+    // высота, измеренная рулеткой в текущей стойке: точки калибровки остаются, по ним — наклон и угол обзора
     c.height_mm = f["height_mm"];
-    c.points.clear();   // ручная высота отменяет калибровку по точкам
+    c.ref_body_mm = body > 0 ? body : c.ref_body_mm;
+    c.height_measured = true;
   }
   if (!f["tilt_deg"].isNull()) {
     if (!f["tilt_deg"].is<double>() || f["tilt_deg"] < -20 || f["tilt_deg"] > 70) throw ValueError("tilt_deg: −20 … 70");
@@ -160,6 +205,12 @@ void vision_configure(JsonObjectConst f) {
     c.points.clear();
   }
   cfg = c;
+  if (!f["height_mm"].isNull() && !cfg.points.empty()) {
+    // решатель считает высоту при корпусе первой точки: перенести измеренную высоту к ней
+    cfg.height_mm = cam_height(cfg.points[0].body);
+    cfg.ref_body_mm = cfg.points[0].body;
+    solve_floor();
+  }
   save_cfg();
 }
 
@@ -506,7 +557,7 @@ static void analyze_floor(Perception &p, double h, double tilt) {
       }
     }
     double row = boundary < 0 ? top : boundary;
-    double d = row_to_mm(row * 4 + 2, h, tilt);
+    double d = row_to_mm(row * 4 + 2, h, tilt, focal_px());
     p.free_mm[c] = (float)std::min(FREE_MAX_MM, std::isfinite(d) ? d : FREE_MAX_MM);
   }
   // однотонный кадр: мало перепадов и малый разброс яркости — стена или бок мебели вплотную
@@ -583,7 +634,7 @@ static void detect(Perception &p, double h, double tilt) {
     q.bearing_deg = vision_bearing_deg((q.x1 + q.x2) / 2.0);
     // ступни видны (рамка не упирается в низ) — расстояние по полу; иначе по высоте рамки, если видна голова
     q.dist_mm = NAN;
-    if (q.y2 < FH - 8) q.dist_mm = row_to_mm(q.y2, h, tilt);
+    if (q.y2 < FH - 8) q.dist_mm = row_to_mm(q.y2, h, tilt, focal_px());
     if (!std::isfinite(q.dist_mm) && q.y1 > 8) q.dist_mm = PERSON_HEIGHT_MM * f / std::max(1, q.y2 - q.y1);
     if (!std::isfinite(q.dist_mm)) q.dist_mm = NAN;
     p.people.push_back(q);
@@ -597,11 +648,13 @@ static void analyze(const uint8_t *jpeg, size_t len, double t, const Motion &m, 
   double h, tilt;
   {
     Lock l;
-    h = cfg.height_mm;
+    h = cam_height(m.body_mm);
     tilt = cfg.tilt_deg;
   }
   Perception p;
   p.t = t;
+  p.h_mm = h;
+  p.tilt_deg = tilt;
   p.synced = is_synced;
   p.vx = m.vx;
   p.turn = m.turn;
@@ -616,7 +669,7 @@ static void analyze(const uint8_t *jpeg, size_t len, double t, const Motion &m, 
     int dx, dy;
     p.residual = align(gray, prev_gray, GW, GH, turning ? 30 : 6, 4, dx, dy);
     p.dt = t - prev_t;
-    if (turning && p.residual < 16) p.yaw_deg = dx * CAMERA_HFOV_DEG / GW;
+    if (turning && p.residual < 16) p.yaw_deg = dx * cfg.hfov_deg / GW;
     if (m.vx > 0.3) {
       p.expansion = expansion(dx, dy);
       p.closeness = std::min(1.0f, p.closeness + 0.25f * p.expansion);
@@ -715,7 +768,8 @@ static void vision_task(void *) {
     if (!got) continue;
     last_seq = got;
     if (t < since + VISION_SETTLE_S) continue;
-    Motion still;
+    Motion still;   // стоя: нужна высота корпуса — от неё высота камеры
+    if (!robot_motion_at(t, still)) still = Motion();
     still.gait_hz = 1;
     analyze(jpeg_buf, len, t, still, false);
   }
@@ -768,15 +822,9 @@ int vision_headers(char *buf, size_t cap) {
   }
   n += snprintf(buf + n, cap - n, "\r\nX-Free: ");
   for (int c = 0; c < FREE_COLS && n < (int)cap - 8; c++) n += snprintf(buf + n, cap - n, "%s%d", c ? "," : "", cm(p.free_mm[c]));
-  double h, tilt;
-  {
-    Lock l;
-    h = cfg.height_mm;
-    tilt = cfg.tilt_deg;
-  }
-  // h, tilt, fov — геометрия камеры: по ним клиент переводит расстояния X-Free в строки кадра
+  // h, tilt, fov — геометрия камеры на этом кадре: по ним клиент переводит расстояния X-Free в строки кадра
   n += snprintf(buf + n, cap - n, "\r\nX-Vision: seq=%u;close=%.2f;synced=%d;age=%d;h=%.0f;tilt=%.1f;fov=%.0f\r\n", p.seq,
-                p.closeness, p.synced, (int)((now_s() - p.t) * 1000), h, tilt, CAMERA_HFOV_DEG);
+                p.closeness, p.synced, (int)((now_s() - p.t) * 1000), p.h_mm, p.tilt_deg, cfg.hfov_deg);
   return std::min(n, (int)cap);
 }
 
@@ -810,14 +858,22 @@ void vision_state(JsonObject out) {
     else bins.add(nullptr);
   }
   JsonObject fl = out["floor"].to<JsonObject>();
-  fl["height_mm"] = std::round(cfg.height_mm);
+  // высота камеры — в текущей стойке; ref — при какой высоте корпуса задана калибровка
+  double body = current_body(), h = cam_height(body);
+  fl["height_mm"] = std::round(h);
+  fl["body_mm"] = std::round(body);
+  fl["ref_height_mm"] = std::round(cfg.height_mm);
+  fl["ref_body_mm"] = std::round(cfg.ref_body_mm);
   fl["tilt_deg"] = std::round(cfg.tilt_deg * 10) / 10;
-  fl["blind_mm"] = std::round(row_to_mm(FH - 1, cfg.height_mm, cfg.tilt_deg));
+  fl["hfov_deg"] = std::round(cfg.hfov_deg * 10) / 10;
+  fl["height_measured"] = cfg.height_measured;
+  fl["blind_mm"] = std::round(row_to_mm(FH - 1, h, cfg.tilt_deg, focal_px()));
   fl["model"] = floor_model.ok;
   for (const FloorPoint &p : cfg.points) {
     JsonArray a = fl["points"].add<JsonArray>();
     a.add(std::round(p.y));
     a.add(std::round(p.mm));
+    a.add(std::round(p.body));
   }
   if (!result.seq) return;
   const Perception &p = result;
