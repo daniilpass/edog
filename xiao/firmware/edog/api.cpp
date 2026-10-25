@@ -140,10 +140,11 @@ static void route(httpd_method_t method, const std::string &path, const String &
     static JsonDocument config;
     if (config.isNull()) {
       r.describe(config);
-      camera_describe(config["camera"].to<JsonObject>());
       config["firmware"] = firmware_id;
     }
     out.set(config);
+    // Камера — каждый раз: API поднимается раньше неё, и первый запрос застал бы «камеры нет».
+    camera_describe(out["camera"].to<JsonObject>());
     return;
   }
   RobotLock lock;
