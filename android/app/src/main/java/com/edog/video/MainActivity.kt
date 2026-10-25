@@ -94,8 +94,8 @@ class MainActivity : Activity() {
         }
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(patrol)
-            addView(stance)
+            addView(patrol, LinearLayout.LayoutParams(-1, -2))
+            addView(stance, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (8 * dp).toInt() })
         }
         val overlay = FrameLayout(this).apply {
             addView(center, FrameLayout.LayoutParams(-1, -1))
