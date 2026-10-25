@@ -589,6 +589,8 @@ function setupPatrol() {
   $('vis-apply').onclick = () => api('PATCH', '/api/vision', { height_mm: Number($('vis-h').value) })
     .then(s => toast(`Высота ${s.vision.floor.height_mm} мм; по точкам: наклон ${s.vision.floor.tilt_deg}°, угол обзора ${s.vision.floor.hfov_deg}°`));
   $('vis-floor-reset').onclick = () => api('POST', '/api/vision/floor_reset').then(() => toast('Калибровка пола сброшена'));
+  $('vis-exp-apply').onclick = () => api('PATCH', '/api/vision', { walk_aec: Number($('vis-aec').value), walk_gain: Number($('vis-gain').value) })
+    .then(s => toast(s.vision.exposure.walk_aec ? `На ходу: выдержка ${s.vision.exposure.walk_aec} строк, усиление до ${s.vision.exposure.walk_gain}` : 'На ходу — автоматика'));
 }
 
 function renderPatrol(p) {
@@ -608,6 +610,13 @@ function renderPatrol(p) {
 
 function renderVision(v) {
   if (!v) return;
+  const ex = v.exposure;
+  if (ex) {
+    $('vis-exp').textContent = (ex.walk_aec ? `на ходу ${ex.walk_aec} строк, усиление до ${ex.walk_gain}` : 'на ходу — автоматика')
+      + ` · сейчас: ${ex.manual ? `ручная, усиление ${ex.gain}` : 'автоматика'}${ex.lum !== undefined ? ` · яркость кадра ${ex.lum} из 255` : ''}`;
+    for (const [id, val] of [['vis-aec', ex.walk_aec], ['vis-gain', ex.walk_gain]])
+      if (document.activeElement !== $(id)) $(id).value = val;
+  }
   $('vis-info').textContent = v.active
     ? `распаковка ${v.ms.decode} мс · люди ${v.ms.detect} мс · пол ${v.ms.analyze} мс · ${v.rate} анализов/с · `
       + `плата ${v.temp_c}°C · свободно ${v.heap_kb} КБ${v.model ? '' : ' · ⚠ модель людей не загружена'}`

@@ -10,6 +10,7 @@
 #include <cmath>
 
 #include "camera.h"
+#include "esp_camera.h"
 #include "config.h"
 #include "esp_jpeg_dec.h"
 #include "jpeg_decoder.h"
@@ -32,6 +33,11 @@ struct FloorPoint { double y, mm, body; };
 struct VisionCfg {
   double phase = VISION_PHASE;
   bool phase_both = VISION_PHASE_BOTH;
+  // Выдержка на ходу: в комнатном свете автоматика держит её длинной, и пол у лап смазан в полосы — шаг
+  // по полу не измерить (запись 25.10). На ходу — ручная выдержка (строки сенсора, драйвер ограничивает длиной
+  // кадра) и усиление, которое само подстраивается под яркость не выше walk_gain; walk_aec 0 — автоматика.
+  int walk_aec = VISION_WALK_AEC;
+  int walk_gain = VISION_WALK_GAIN;
   // Камера жёстко на корпусе: высота камеры задана при высоте корпуса ref_body_mm, в другой стойке
   // (другой профиль шага) она выше или ниже ровно на разницу высот корпуса.
   double height_mm = CAMERA_HEIGHT_MM;
@@ -75,6 +81,8 @@ static void save_cfg() {
   JsonDocument doc;
   doc["phase"] = cfg.phase;
   doc["phase_both"] = cfg.phase_both;
+  doc["walk_aec"] = cfg.walk_aec;
+  doc["walk_gain"] = cfg.walk_gain;
   doc["height_mm"] = cfg.height_mm;
   doc["ref_body_mm"] = cfg.ref_body_mm;
   doc["tilt_deg"] = cfg.tilt_deg;
@@ -103,6 +111,8 @@ static void load_cfg() {
   if (json.isEmpty() || deserializeJson(doc, json)) return;
   cfg.phase = doc["phase"] | cfg.phase;
   cfg.phase_both = doc["phase_both"] | cfg.phase_both;
+  cfg.walk_aec = doc["walk_aec"] | cfg.walk_aec;
+  cfg.walk_gain = doc["walk_gain"] | cfg.walk_gain;
   cfg.height_mm = doc["height_mm"] | cfg.height_mm;
   cfg.ref_body_mm = doc["ref_body_mm"] | cfg.ref_body_mm;
   cfg.tilt_deg = doc["tilt_deg"] | cfg.tilt_deg;
@@ -191,6 +201,14 @@ void vision_configure(JsonObjectConst f) {
   if (!f["phase_both"].isNull()) {
     if (!f["phase_both"].is<bool>()) throw ValueError("phase_both: true/false");
     c.phase_both = f["phase_both"];
+  }
+  if (!f["walk_aec"].isNull()) {
+    if (!f["walk_aec"].is<int>() || f["walk_aec"] < 0 || f["walk_aec"] > 2000) throw ValueError("walk_aec: 0 (автоматика) … 2000");
+    c.walk_aec = f["walk_aec"];
+  }
+  if (!f["walk_gain"].isNull()) {
+    if (!f["walk_gain"].is<int>() || f["walk_gain"] < 0 || f["walk_gain"] > 64) throw ValueError("walk_gain: 0 … 64");
+    c.walk_gain = f["walk_gain"];
   }
   if (!f["height_mm"].isNull()) {
     if (!f["height_mm"].is<double>() || f["height_mm"] < 30 || f["height_mm"] > 400) throw ValueError("height_mm: 30 … 400");
@@ -529,9 +547,38 @@ static inline bool is_floor(int i) {
 
 static const float PERSON_MAX_ASPECT = 0.6f;   // ширина рамки человека / высота: по записи люди 0.4–0.55
 static const float FLOOR_Y_DRIFT = 45, FLOOR_C_DRIFT = 10;   // насколько дальний пол может отличаться от пола у лап
+static const double COVERED_SD = 9, COVERED_SD_WALK = 5;
+static int exposure_manual = -1;   // что сейчас стоит на сенсоре: 1 — ручная, 0 — авто, −1 — неизвестно
+static int exposure_aec = -1, exposure_gain = -1;
+static float lum = NAN;            // средняя яркость последнего кадра анализа (0…255) — подбирать выдержку
+static float gain_now = -1;        // усиление на ходу: к яркости WALK_LUM, не выше walk_gain
+static const float WALK_LUM = 70;   // разброс яркости кадра (0…255) ниже — кадр закрыт, камера вплотную к препятствию
 static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 static void analyze_floor(Perception &p, double h, double tilt) {
+  // однотонный кадр: мало перепадов и малый разброс яркости — стена или бок мебели вплотную
+  long flat = 0;
+  double s = 0, q = 0;
+  for (int i = 0; i < AW * AH; i++) {
+    flat += agrad[i] < 6;
+    s += ay[i];
+    q += (double)ay[i] * ay[i];
+  }
+  p.flatness = (float)flat / (AW * AH);
+  double sd = std::sqrt(std::max(0.0, q / (AW * AH) - std::pow(s / (AW * AH), 2)));
+  lum = (float)(s / (AW * AH));
+  // Кадр закрыт: яркость почти одна по всему кадру — объектив уткнулся в стену или мебель (запись
+  // 25.10: разброс 0.6–8 перед ударами, тёмный коридор — от 10, свет — от 36). Пола не видно, модель пола
+  // на таком кадре не учится (иначе вся темнота — «пол до горизонта»), впереди — вплотную.
+  // с короткой выдержкой на ходу кадр темнее и ровнее — порог строже
+  if (sd < (exposure_manual == 1 ? COVERED_SD_WALK : COVERED_SD)) {
+    p.floor_known = floor_model.ok;
+    p.bottom_floor = 0;
+    float blind = (float)row_to_mm(FH - 1, h, tilt, focal_px());
+    for (float &f : p.free_mm) f = blind;
+    p.closeness = 1;
+    return;
+  }
   update_floor_model();
   p.floor_known = floor_model.ok;
   // строка горизонта (в 120 строках анализа): выше неё пола не бывает
@@ -583,16 +630,6 @@ static void analyze_floor(Perception &p, double h, double tilt) {
     double d = row_to_mm(row * 4 + 2, h, tilt, focal_px());
     p.free_mm[c] = (float)std::min(FREE_MAX_MM, std::isfinite(d) ? d : FREE_MAX_MM);
   }
-  // однотонный кадр: мало перепадов и малый разброс яркости — стена или бок мебели вплотную
-  long flat = 0;
-  double s = 0, q = 0;
-  for (int i = 0; i < AW * AH; i++) {
-    flat += agrad[i] < 6;
-    s += ay[i];
-    q += (double)ay[i] * ay[i];
-  }
-  p.flatness = (float)flat / (AW * AH);
-  double sd = std::sqrt(std::max(0.0, q / (AW * AH) - std::pow(s / (AW * AH), 2)));
   float flat_close = std::min(1.0f, std::max(0.0f, (p.flatness - 0.7f) / 0.25f)) * (sd < 20 ? 1.0f : 0.4f);
   float floor_close = floor_model.ok ? std::min(1.0f, std::max(0.0f, (0.75f - p.bottom_floor) / 0.6f)) : 0.0f;
   p.closeness = std::min(1.0f, 0.65f * floor_close + 0.2f * flat_close);
@@ -734,6 +771,16 @@ static void analyze(const uint8_t *jpeg, size_t len, double t, const Motion &m, 
   downsample();
   analyze_floor(p, h, tilt);
   make_thumb(p);
+  // усиление на ходу — к яркости WALK_LUM (по кадру, снятому с ручной выдержкой)
+  if (is_synced && exposure_manual == 1 && std::isfinite(lum) && gain_now >= 0) {
+    int cap;
+    {
+      Lock l;
+      cap = cfg.walk_gain;
+    }
+    float k = std::sqrt(WALK_LUM / std::max(lum, 5.0f));
+    gain_now = std::min((float)cap, std::max(0.0f, gain_now * std::min(1.25f, std::max(0.8f, k)) + (k > 1 ? 0.5f : 0)));
+  }
   // соседние синхронные кадры (не дальше двух циклов): выравнивание, разница, поворот, расширение
   if (is_synced && prev_valid && t - prev_t < 2.5 / m.gait_hz) {
     bool turning = std::fabs(m.turn) > 0.3 && std::fabs(m.vx) < 0.2;
@@ -790,6 +837,36 @@ static void load_model() {
                 ESP.getFreePsram() / 1024);
 }
 
+// Экспозиция камеры: на ходу — ручная (короткая выдержка, усиление), стоя — автоматика (set_exposure).
+
+static void set_exposure(bool walking) {
+  int aec, gain;
+  {
+    Lock l;
+    aec = cfg.walk_aec;
+    gain = cfg.walk_gain;
+  }
+  bool manual = walking && aec > 0;
+  if (gain_now < 0 || gain_now > gain) gain_now = gain * 0.6f;
+  gain = (int)std::lround(gain_now);
+  if (manual == (exposure_manual == 1) && exposure_manual >= 0 && (!manual || (aec == exposure_aec && gain == exposure_gain)))
+    return;
+  sensor_t *s = esp_camera_sensor_get();
+  if (!s) return;
+  if (manual) {
+    s->set_exposure_ctrl(s, 0);
+    s->set_aec_value(s, aec);
+    s->set_gain_ctrl(s, 0);
+    s->set_agc_gain(s, gain);
+  } else {
+    s->set_exposure_ctrl(s, 1);
+    s->set_gain_ctrl(s, 1);
+  }
+  exposure_manual = manual;
+  exposure_aec = aec;
+  exposure_gain = gain;
+}
+
 static void vision_task(void *) {
   delay(3000);   // сначала пусть поднимутся API, камера и Bluetooth
   load_model();
@@ -812,6 +889,7 @@ static void vision_task(void *) {
     }
     Motion m;
     bool known = robot_motion_at(now_s() - 0.012, m);
+    set_exposure(known && m.walking);
     if (known && m.walking) {
       // на ходу — только кадры в выбранной фазе
       xSemaphoreTake(synced_lock, portMAX_DELAY);
@@ -898,9 +976,10 @@ int vision_headers(char *buf, size_t cap) {
   n += snprintf(buf + n, cap - n, "\r\nX-Free: ");
   for (int c = 0; c < FREE_COLS && n < (int)cap - 8; c++) n += snprintf(buf + n, cap - n, "%s%d", c ? "," : "", cm(p.free_mm[c]));
   // h, tilt, fov — геометрия камеры на этом кадре: по ним клиент переводит расстояния X-Free в строки кадра
-  n += snprintf(buf + n, cap - n, "\r\nX-Vision: seq=%u;close=%.2f;synced=%d;age=%d;h=%.0f;tilt=%.1f;fov=%.0f;step=%d\r\n", p.seq,
-                p.closeness, p.synced, (int)((now_s() - p.t) * 1000), p.h_mm, p.tilt_deg, cfg.hfov_deg,
-                std::isfinite(p.step_mm) ? (int)std::lround(p.step_mm) : -1);
+  n += snprintf(buf + n, cap - n, "\r\nX-Vision: seq=%u;close=%.2f;synced=%d;age=%d;h=%.0f;tilt=%.1f;fov=%.0f;step=%d;exp=%s;lum=%.0f\r\n",
+                p.seq, p.closeness, p.synced, (int)((now_s() - p.t) * 1000), p.h_mm, p.tilt_deg, cfg.hfov_deg,
+                std::isfinite(p.step_mm) ? (int)std::lround(p.step_mm) : -1, exposure_manual == 1 ? "walk" : "auto",
+                std::isfinite(lum) ? lum : -1.0f);
   return std::min(n, (int)cap);
 }
 
@@ -920,6 +999,12 @@ void vision_state(JsonObject out) {
   JsonObject ph = out["phase"].to<JsonObject>();
   ph["target"] = cfg.phase;
   ph["both"] = cfg.phase_both;
+  JsonObject ex = out["exposure"].to<JsonObject>();
+  ex["walk_aec"] = cfg.walk_aec;
+  ex["walk_gain"] = cfg.walk_gain;
+  ex["manual"] = exposure_manual == 1;
+  if (exposure_manual == 1) ex["gain"] = exposure_gain;
+  if (std::isfinite(lum)) ex["lum"] = std::lround(lum);
   ph["tol"] = VISION_PHASE_TOL;
   ph["jitter_ms"] = std::round(jitter_ms * 10) / 10;
   ph["synced_rate"] = last_synced_t && now - last_synced_t < 2 ? std::round(synced_rate * 10) / 10 : 0;

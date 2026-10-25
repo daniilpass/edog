@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <map>
 #include <vector>
 
 #include "config.h"
@@ -143,6 +144,60 @@ static void remember(const float *thumb, double now) {
   memory.push_back(m);
 }
 
+// ---------- память пройденного ----------
+// Положение собаки от старта патруля — по курсу и шагам (мм, x — куда смотрела на старте, y — вправо).
+// Оно плывёт, но для «куда я ещё не ходила» хватает: пол разбит на клетки PATROL_CELL_MM, в клетке —
+// сколько секунд собака в ней провела. Клетки забываются через PATROL_MEMORY_S.
+
+struct Cell {
+  double seconds, t;
+  long cx, cy;
+};
+static std::map<long, Cell> cells;
+static double pos_x = 0, pos_y = 0;
+
+static long cell_key(double x, double y) {
+  long cx = (long)std::floor(x / PATROL_CELL_MM), cy = (long)std::floor(y / PATROL_CELL_MM);
+  return cx * 100003L + cy;
+}
+
+static void visit(double dt, double now) {
+  Cell &c = cells[cell_key(pos_x, pos_y)];
+  c.cx = (long)std::floor(pos_x / PATROL_CELL_MM);
+  c.cy = (long)std::floor(pos_y / PATROL_CELL_MM);
+  c.seconds += dt;
+  c.t = now;
+  if (cells.size() > 400 || (long)(now * 10) % 100 == 0)   // раз в ~10 с и при переполнении — старое долой
+    for (auto it = cells.begin(); it != cells.end();)
+      if (now - it->second.t > PATROL_MEMORY_S) it = cells.erase(it);
+      else ++it;
+}
+
+// Насколько исхожено направление: клетки в 0.7 и 1.4 м по курсу, 0 — не была … 1 — была долго.
+static double visited_ahead(double hdg) {
+  double a = hdg * M_PI / 180, sum = 0;
+  for (double d : {700.0, 1400.0}) {
+    auto it = cells.find(cell_key(pos_x + d * std::cos(a), pos_y + d * std::sin(a)));
+    if (it != cells.end()) sum += it->second.seconds;
+  }
+  return clamp(sum / 20, 0, 1);
+}
+
+// Насколько направление уводит прочь от исхоженного: −1 — к середине исхоженного, 1 — от неё.
+static double outward(double hdg) {
+  double sx = 0, sy = 0, sw = 0;
+  for (const auto &kv : cells) {
+    sx += (kv.second.cx + 0.5) * PATROL_CELL_MM * kv.second.seconds;
+    sy += (kv.second.cy + 0.5) * PATROL_CELL_MM * kv.second.seconds;
+    sw += kv.second.seconds;
+  }
+  if (sw <= 0) return 0;
+  double dx = pos_x - sx / sw, dy = pos_y - sy / sw, len = std::hypot(dx, dy);
+  if (len < 200) return 0;
+  double a = hdg * M_PI / 180;
+  return (std::cos(a) * dx + std::sin(a) * dy) / len;
+}
+
 // ---------- состояние патруля ----------
 
 static double heading = 0;                       // курс от включения патруля, °, + — по часовой
@@ -169,7 +224,7 @@ static double free_center = NAN, closeness = 0;
 
 // осмотр
 struct View {
-  double heading, free, novelty, closeness;
+  double heading, free, novelty, closeness, visited;
 };
 static std::vector<double> scan_plan;
 static std::vector<View> views;
@@ -286,6 +341,8 @@ void patrol_start() {
   wall_mode = false;
   for (MapPoint &p : sectors) p = MapPoint();
   people.clear();
+  cells.clear();
+  pos_x = pos_y = 0;
   Serial.println("патруль: включён");
   enter(START);
 }
@@ -381,11 +438,11 @@ static void on_perception(const Perception &p, double now) {
   if (state == SCAN && !p.synced && p.t > view_since + VISION_SETTLE_S && robot_still_since() < p.t) {
     double nov = novelty(p.thumb, now);
     remember(p.thumb, now);
-    views.push_back({heading, center_free(p), nov, p.closeness});
+    views.push_back({heading, center_free(p), nov, p.closeness, visited_ahead(heading)});
     scan_idx++;
     // вид свободный и новый — идём сразу, остальные стороны не осматриваем
     const View &v = views.back();
-    if (std::isfinite(v.free) && v.free >= 1200 && v.closeness < 0.4 && v.novelty >= 0.4 &&
+    if (std::isfinite(v.free) && v.free >= 1200 && v.closeness < 0.4 && v.novelty >= 0.4 && v.visited < 0.5 &&
         std::fabs(wrap(v.heading - scan_from)) >= 45) {
       last_tight = false;
       enter(WALK);
@@ -395,13 +452,16 @@ static void on_perception(const Perception &p, double now) {
       turn_to(scan_plan[scan_idx], SCAN);
       return;
     }
-    // выбор направления: свободно × ново × немного случайности, разворот назад — со штрафом
+    // Выбор направления: свободно × ново по виду, плюс не исхожено и прочь от исхоженного (иначе в
+    // полутьме все виды похожи и собака кружит у старта), чуть — туда же, куда шла; назад — со штрафом.
     const View *pick = nullptr;
     double best_score = -1e9;
     for (const View &v : views) {
       double f = std::isfinite(v.free) ? v.free : 600;
       if (f < 300 || v.closeness > 0.7) continue;
-      double score = std::min(f, 1500.0) / 1500 * (0.4 + 0.6 * v.novelty) + frand(0, 0.15);
+      double score = std::min(f, 1500.0) / 1500 * (0.4 + 0.6 * v.novelty) + 0.3 * (1 - v.visited) +
+                     0.2 * outward(v.heading) + frand(0, 0.1);
+      if (std::fabs(wrap(v.heading - (scan_from - 180))) < 30) score += 0.1;
       if (std::fabs(wrap(v.heading - scan_from)) < 45) score -= 0.3;
       if (score > best_score) {
         best_score = score;
@@ -446,6 +506,12 @@ static void tick() {
   map_move(dturn, vx * speed * dt);
   heading += dturn;
   map_forget(now);
+  if (state != OFF) {
+    double a = heading * M_PI / 180;
+    pos_x += vx * speed * dt * std::cos(a);
+    pos_y += vx * speed * dt * std::sin(a);
+    visit(dt, now);
+  }
 
   if (state == OFF) return;
   if (r.estops != seen_estops) {
@@ -523,8 +589,14 @@ static void tick() {
       break;
     }
     case APPROACH: {
-      if (now - target.t > 2.0) {
+      if (now - target.t > PATROL_LOST_S) {
         Serial.println("патруль: человек пропал из вида");
+        start_scan(false);
+        break;
+      }
+      if (now - since > PATROL_APPROACH_MAX_S) {   // не подойти (мебель, ложная рамка) — не кружить, а идти дальше
+        Serial.println("патруль: к человеку не подойти — дальше");
+        ignore_until = now + PATROL_IGNORE_S;
         start_scan(false);
         break;
       }
@@ -623,6 +695,9 @@ void patrol_state(JsonObject out) {
   out["seg_mm"] = std::lround(seg_mm);
   out["odo_frames"] = odo_frames;
   out["drift_deg"] = std::lround(drift_deg);
+  out["pos_cm"].add(std::lround(pos_x / 10));
+  out["pos_cm"].add(std::lround(pos_y / 10));
+  out["cells"] = cells.size();
   if (now < ignore_until) out["ignore_s"] = std::ceil(ignore_until - now);
   out["vx"] = std::round(cmd_vx * 100) / 100;
   out["turn"] = std::round(cmd_turn * 100) / 100;

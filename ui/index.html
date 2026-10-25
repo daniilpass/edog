@@ -95,6 +95,13 @@
     <div class="card" id="vision-card" hidden>
       <h2>Зрение</h2>
       <div class="muted" id="vis-info"></div>
+      <h3>Выдержка на ходу</h3>
+      <div class="muted" id="vis-exp"></div>
+      <div class="row" title="Короткая выдержка — пол у лап не смазывается и шаг по полу измеряется. Усиление само подстраивается под яркость, не выше предела. Выдержка 0 — автоматика и на ходу">
+        <label>выдержка <input type="number" id="vis-aec" min="0" max="2000" step="10" class="narrow"> строк</label>
+        <label>усиление до <input type="number" id="vis-gain" min="0" max="64" step="1" class="narrow"></label>
+        <button id="vis-exp-apply">Применить</button>
+      </div>
       <h3>Фаза шага для кадров на ходу</h3>
       <div class="muted" id="vis-phase"></div>
       <div class="row">

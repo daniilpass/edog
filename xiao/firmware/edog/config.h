@@ -36,6 +36,8 @@ static const bool VISION_PHASE_BOTH = false;       // брать и вторую
 static const double VISION_SETTLE_S = 0.3;         // стоя: кадр берётся через столько после остановки
 static const float PERSON_SCORE = 0.5f;            // уверенность детектора, ниже — не человек
 static const double PERSON_HEIGHT_MM = 1650.0;     // рост для оценки расстояния по высоте рамки
+static const int VISION_WALK_AEC = 120;           // выдержка на ходу, строки сенсора (~1/200 с); 0 — автоматика
+static const int VISION_WALK_GAIN = 48;           // предел усиления на ходу (0…64), подстраивается под яркость
 static const double FREE_MAX_MM = 3000.0;          // свободное расстояние дальше этого — «далеко»
 
 // ---------- патруль ----------
@@ -44,6 +46,9 @@ static const double PATROL_TURN_DPS = 45.0;        // скорость разв�
 static const double PATROL_SLIP = 0.7;             // доля расчётной скорости шага, которая доходит до пола
 static const double PATROL_GREET_MM = 1100.0;      // подходить к человеку до этого расстояния
 static const double PATROL_MEMORY_S = 480.0;       // зрительная память мест: столько помнит увиденное
+static const double PATROL_CELL_MM = 500.0;        // клетка пола в памяти пройденного (положение — по курсу и шагам)
+static const double PATROL_LOST_S = 4.0;           // человек пропал из вида на столько — подход бросается
+static const double PATROL_APPROACH_MAX_S = 20.0;  // не дошла до человека за столько — бросить, людей не замечать
 
 // ---------- сон ----------
 static const double SLEEP_AFTER_S = 60.0;          // автосон: столько стоит без команд, движения и патруля
