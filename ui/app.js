@@ -164,6 +164,7 @@ function buildStatic() {
 function render(s) {
   state = s;
   lastStateAt = Date.now();
+  recState(s);
   dog?.update(s);
 
   $('torque').checked = s.enabled;
@@ -279,6 +280,7 @@ async function camRead(url) {
         if (buf.length < end + 4 + len) break;
         const jpeg = buf.slice(end + 4, end + 4 + len);
         buf = buf.slice(end + 4 + len);
+        recFrame(jpeg, headers);
         createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' })).then(bmp => {
           camFrame?.close();
           camFrame = bmp;
@@ -294,6 +296,63 @@ async function camRead(url) {
   camStarted = Date.now();
   $('cam-msg').textContent = '⚠ Нет видео · переподключение…';
 }
+
+// Запись на ПК (ui/serve.py → recordings/<время>/): кадры как есть и log.jsonl — по строке на кадр (его заголовки)
+// и на каждое состояние собаки (без списка серво). Строки копятся и уходят раз в секунду.
+let rec = null;   // { name, frames, lines, failed }
+
+async function recStart() {
+  try {
+    const r = await fetch('/rec/start', { method: 'POST' });
+    if (!r.ok) throw new Error(r.status);
+    rec = { name: await r.text(), frames: 0, lines: [], failed: false };
+    recInfo();
+  } catch {
+    $('cam-rec').checked = false;
+    toast('Запись только через портал с ПК: python ui/serve.py', 'error');
+  }
+}
+
+function recStop() {
+  if (!rec) return;
+  recFlush();
+  toast(`Запись recordings/${rec.name}: ${rec.frames} кадров`);
+  rec = null;
+  recInfo();
+}
+
+function recInfo() {
+  $('cam-rec-info').textContent = rec ? `запись recordings/${rec.name} · кадров ${rec.frames}${rec.failed ? ' · ⚠ ошибка сохранения' : ''}` : '';
+}
+
+function recPut(file, body, method) {
+  const name = rec.name, r = rec;
+  fetch(`/rec/${name}/${file}`, { method, body }).then(res => { if (!res.ok) throw new Error(res.status); })
+    .catch(() => { r.failed = true; recInfo(); });
+}
+
+function recFrame(jpeg, headers) {
+  if (!rec) return;
+  const file = `${String(rec.frames).padStart(5, '0')}.jpg`;
+  rec.frames++;
+  recPut(file, jpeg, 'PUT');
+  const { 'content-type': _t, 'content-length': _l, ...h } = headers;
+  rec.lines.push(JSON.stringify({ t: Date.now() / 1000, frame: file, h }));
+}
+
+function recState(s) {
+  if (!rec) return;
+  const { servos: _s, ...slim } = s;
+  rec.lines.push(JSON.stringify({ t: Date.now() / 1000, state: slim }));
+}
+
+function recFlush() {
+  if (!rec?.lines.length) return;
+  recPut('log.jsonl', rec.lines.join('\n') + '\n', 'POST');
+  rec.lines = [];
+  recInfo();
+}
+setInterval(recFlush, 1000);
 
 function camStart() {
   camMode = 'watch';
@@ -469,6 +528,7 @@ function setupCamera() {
     try { localStorage.setItem(OVERLAY_KEY, overlay.checked ? '1' : '0'); } catch { /* без хранилища */ }
     drawCam();
   };
+  $('cam-rec').onchange = e => (e.target.checked ? recStart() : recStop());
   $('cam-take').onclick = camTake;
   $('cam-canvas').onclick = camClick;
   apply();

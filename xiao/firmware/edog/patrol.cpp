@@ -21,6 +21,9 @@ static const double MAP_FORGET_S = 90.0;        // сектор без новы�
 static const double PERSON_FORGET_S = 8.0;
 static const int MEMORY_SIZE = 100;
 static const double PERSON_MAX_MM = 5000.0;
+// Отрезок ходьбы — по пройденному (шаг по полу из зрения): буксует — идёт дольше. Пол не читается — по времени.
+static const double SEG_MM_MIN = 2000, SEG_MM_MAX = 3500, WALL_SEG_MM_MIN = 3000, WALL_SEG_MM_MAX = 4500;
+static const double SEG_MAX_S = 90;   // дольше отрезок не тянется, сколько бы ни намерил
 
 static Robot *robot;
 static std::atomic<bool> active{false};
@@ -155,7 +158,10 @@ static State turn_next = WALK;
 static bool turn_next_blocked = false;
 
 // ходьба
-static double seg_end = 0, walk_t0 = 0, last_remember = 0;
+static double seg_end = 0, seg_cap = 0, walk_t0 = 0, last_remember = 0;
+static double seg_mm = 0, walked_mm = 0;   // сколько пройти и сколько пройдено за отрезок
+static int odo_frames = 0;                 // кадров отрезка, где шаг по полу измерен
+static double walk_heading = 0, drift_deg = 0;   // курс отрезка (его держим) и увод за отрезок по камере
 static bool wall_mode = false;
 static double wall_until = 0;
 static int close_run = 0, near_run = 0;
@@ -184,7 +190,6 @@ static Target target = {0, NAN, -1e9, 0};
 // приветствие, отход
 static int greet_step = 0;
 static double greet_t = 0, backup_until = 0;
-static bool backup_then_greet = false;
 static int greetings = 0, stucks = 0;
 
 static void enter(State s);
@@ -200,22 +205,23 @@ static void turn_to(double abs_heading, State next, bool blocked = false) {
 
 static void start_scan(bool blocked) {
   scans++;
-  scan_full = (blocked && last_tight) || scans % 3 == 0;
+  scan_full = blocked && last_tight;   // все 8 сторон — только когда тесно со всех сторон
   scan_plan.clear();
   views.clear();
   scan_from = heading + 180;
   if (scan_full) {
     for (int i = 0; i < 8; i++) scan_plan.push_back(heading + 45 * i);
+  } else if (blocked) {   // впереди препятствие — нос не смотрим
+    for (double d : {45.0, 90.0, -45.0, -90.0}) scan_plan.push_back(heading + d);
   } else {
-    for (double d : {0.0, 45.0, 90.0, -45.0, -90.0}) scan_plan.push_back(heading + d);
+    for (double d : {0.0, 45.0, -45.0}) scan_plan.push_back(heading + d);
   }
   scan_idx = 0;
   turn_to(scan_plan[0], SCAN);
 }
 
-static void backup(double seconds, bool then_greet) {
+static void backup(double seconds) {
   backup_until = now_s() + seconds;
-  backup_then_greet = then_greet;
   enter(BACKUP);
 }
 
@@ -226,7 +232,13 @@ static void enter(State s) {
   double now = since;
   switch (s) {
     case WALK:
-      seg_end = now + (wall_mode ? frand(15, 20) : frand(2, 6));
+      seg_end = now + (wall_mode ? frand(40, 60) : frand(25, 40));   // по времени — если пол не читается
+      seg_cap = now + SEG_MAX_S;
+      seg_mm = wall_mode ? frand(WALL_SEG_MM_MIN, WALL_SEG_MM_MAX) : frand(SEG_MM_MIN, SEG_MM_MAX);
+      walked_mm = 0;
+      odo_frames = 0;
+      walk_heading = heading;
+      drift_deg = 0;
       walk_t0 = now;
       close_run = near_run = 0;
       free_center = NAN;
@@ -337,6 +349,20 @@ static void on_perception(const Perception &p, double now) {
     free_center = center_free(p);
     closeness = p.closeness;
     close_run = p.closeness > 0.7 ? close_run + 1 : 0;
+    // увод: поворот по камере сверх того, что велели, — в курс и карту
+    if (std::isfinite(p.yaw_deg) && std::fabs(p.turn) < 0.3) {
+      double drift = p.yaw_deg - p.turn * turn_dps * p.dt;
+      heading += drift;
+      drift_deg += drift;
+      map_move(drift, 0);
+    }
+    // пройдено: по полу, а кадр без шага — по расчётной скорости
+    if (std::isfinite(p.step_mm)) {
+      walked_mm += std::max(0.0f, p.step_mm);
+      odo_frames++;
+    } else {
+      walked_mm += p.vx * 2 * robot->gait_cfg().stride_mm * robot->gait_cfg().gait_hz * PATROL_SLIP * p.dt;
+    }
     near_run = std::isfinite(free_center) && free_center < 250 ? near_run + 1 : 0;
     if (now - last_remember > 3) {
       remember(p.thumb, now);
@@ -345,7 +371,7 @@ static void on_perception(const Perception &p, double now) {
     if (p.stagnant) {
       stucks++;
       Serial.println("патруль: упёрлась — назад");
-      backup(1.2, false);
+      backup(1.2);
     } else if (p.closeness > 0.9 || close_run >= 2 || near_run >= 2) {
       Serial.printf("патруль: близко (закрытость %.2f, свободно %.0f мм)\n", p.closeness, free_center);
       if (wall_mode) turn_to(heading - frand(60, 90), WALK);
@@ -357,6 +383,14 @@ static void on_perception(const Perception &p, double now) {
     remember(p.thumb, now);
     views.push_back({heading, center_free(p), nov, p.closeness});
     scan_idx++;
+    // вид свободный и новый — идём сразу, остальные стороны не осматриваем
+    const View &v = views.back();
+    if (std::isfinite(v.free) && v.free >= 1200 && v.closeness < 0.4 && v.novelty >= 0.4 &&
+        std::fabs(wrap(v.heading - scan_from)) >= 45) {
+      last_tight = false;
+      enter(WALK);
+      return;
+    }
     if (scan_idx < scan_plan.size()) {
       turn_to(scan_plan[scan_idx], SCAN);
       return;
@@ -379,7 +413,7 @@ static void on_perception(const Perception &p, double now) {
         last_tight = true;
         start_scan(true);
       } else {
-        backup(1.2, false);
+        backup(1.2);
       }
       return;
     }
@@ -461,7 +495,7 @@ static void tick() {
         enter(turn_next);
         break;
       }
-      cmd_turn = (rem > 0 ? 1 : -1) * (std::fabs(rem) > 25 ? 0.9 : 0.6);
+      cmd_turn = rem > 0 ? 1 : -1;   // всегда полным ходом
       break;
     }
     case SCAN:
@@ -473,15 +507,19 @@ static void tick() {
       }
       break;
     case WALK: {
-      if (wall_mode && now > wall_until) wall_mode = false;
-      if (now > seg_end) {
+      if (wall_mode && now > wall_until) {   // дуга кончилась — держим курс, куда пришли
+        wall_mode = false;
+        walk_heading = heading;
+      }
+      if ((odo_frames ? walked_mm >= seg_mm : now > seg_end) || now > seg_cap) {
+        Serial.printf("патруль: отрезок %.0f мм за %.1f с (по полу %d кадров)\n", walked_mm, now - walk_t0, odo_frames);
         start_scan(false);
         break;
       }
-      double f = std::isfinite(free_center) ? clamp(free_center / 800, 0.35, 1) : 0.6;
-      double c = closeness > 0.4 ? clamp(1 - (closeness - 0.4) / 0.3 * 0.65, 0.35, 1) : 1;
-      cmd_vx = f * c;
-      cmd_turn = wall_mode ? 0.2 : 0;
+      cmd_vx = 1;   // всегда полным шагом: медленнее собака ползёт; у препятствия — осмотр
+      // вдоль стены — дугой; иначе держим курс отрезка, подруливая против увода
+      double off = wrap(walk_heading - heading);
+      cmd_turn = wall_mode ? 0.2 : std::fabs(off) < 3 ? 0 : clamp(off / 20, -0.3, 0.3);
       break;
     }
     case APPROACH: {
@@ -493,13 +531,11 @@ static void tick() {
       double rel = wrap(target.heading - heading);
       double mm = std::isfinite(target.mm) ? target.mm : 2000;
       if (std::fabs(rel) > 12) {
-        cmd_turn = rel > 0 ? 0.6 : -0.6;
-      } else if (mm < PATROL_TOO_CLOSE_MM) {
-        backup(0.8, true);
+        cmd_turn = rel > 0 ? 1 : -1;
       } else if (mm < PATROL_GREET_MM || target.box_h > 0.6 * 480) {
         enter(GREET);
       } else {
-        cmd_vx = clamp((mm - PATROL_GREET_MM) / 1200 + 0.4, 0.4, 0.8);
+        cmd_vx = 1;
         cmd_turn = clamp(rel / 30, -0.3, 0.3);
       }
       break;
@@ -526,8 +562,6 @@ static void tick() {
     case BACKUP:
       if (now < backup_until) {
         cmd_vx = -1;
-      } else if (backup_then_greet) {
-        enter(GREET);
       } else {
         scan_plan.clear();   // после разворота — осмотр с нового места, план строится тогда
         turn_to(heading + rsign() * frand(90, 150), SCAN);
@@ -585,6 +619,10 @@ void patrol_state(JsonObject out) {
   out["greetings"] = greetings;
   out["scans"] = scans;
   out["stucks"] = stucks;
+  out["walked_mm"] = std::lround(walked_mm);
+  out["seg_mm"] = std::lround(seg_mm);
+  out["odo_frames"] = odo_frames;
+  out["drift_deg"] = std::lround(drift_deg);
   if (now < ignore_until) out["ignore_s"] = std::ceil(ignore_until - now);
   out["vx"] = std::round(cmd_vx * 100) / 100;
   out["turn"] = std::round(cmd_turn * 100) / 100;
@@ -609,7 +647,9 @@ void patrol_state(JsonObject out) {
 int patrol_headers(char *buf, size_t cap) {
   RobotLock lock;
   double now = now_s();
-  int n = snprintf(buf, cap, "X-Patrol: state=%s;greet=%d;heading=%ld", CODES[state], greetings, std::lround(wrap(heading)));
+  int n = snprintf(buf, cap, "X-Patrol: state=%s;greet=%d;heading=%ld;walked=%ld;seg=%ld;odo=%d;drift=%ld", CODES[state],
+               greetings, std::lround(wrap(heading)), std::lround(walked_mm), std::lround(seg_mm), odo_frames,
+               std::lround(drift_deg));
   n += snprintf(buf + n, cap - n, "\r\nX-Map: f=%d", (int)vision_hfov_deg());
   double td = target_deg();
   if (std::isfinite(td)) n += snprintf(buf + n, cap - n, ";t=%ld", std::lround(td));

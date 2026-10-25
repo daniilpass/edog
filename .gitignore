@@ -10,3 +10,5 @@ xiao/build/
 xiao/firmware/edog/build/
 # сохранённые прошивки для отката
 xiao/backup/
+# записи с портала (ui/serve.py): кадры и состояние собаки
+recordings/

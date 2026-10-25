@@ -870,7 +870,11 @@ void Robot::feet(double dt, double xs[4], double zs[4]) {
   // Вынос лап — в стойке и при ходьбе вперёд; назад и на развороте — лапы под осью бедра.
   bool forward = !walking || vx > 0.05;
   forward_blend_ = walking ? clampd(forward_blend_ + (forward ? dt : -dt) / WALK_RAMP_S, 0.0, 1.0) : 1.0;
-  double height = body_.height + w * (gait_height(g, body_.height) - body_.height);
+  // Назад — всегда на высоте базовой стойки: на высокой стойке задний ход плохой.
+  back_blend_ = walking ? clampd(back_blend_ + (vx < -0.05 ? dt : -dt) / WALK_RAMP_S, 0.0, 1.0) : 0.0;
+  double walk_h = gait_height(g, body_.height);
+  walk_h += back_blend_ * (STAND_HEIGHT_MM - walk_h);
+  double height = body_.height + w * (walk_h - body_.height);
   double walk_x = forward_blend_ * g.foot_x_mm;
   double foot_x = body_.foot_x + w * (walk_x - body_.foot_x);
   // огрехи сборки: поправка сверх пределов

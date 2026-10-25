@@ -428,6 +428,7 @@ static uint8_t *jpeg_buf, *rgb;            // кадр JPEG, распакова�
 static int16_t *ay, *au, *av;              // 160×120: яркость и цветность
 static uint8_t *agrad;                     // 160×120: перепад яркости
 static uint8_t *gray, *prev_gray;   // 80×60: сейчас и прошлый синхронный
+static int16_t *prev_ay;             // 160×120: яркость прошлого синхронного — для шага по полу
 static bool prev_valid = false;
 static double prev_t = 0;
 static Perception result;
@@ -515,7 +516,7 @@ static void update_floor_model() {
   if (d < 3) {
     set(0.15f);
     f.mismatch = 0;
-  } else if (++f.mismatch >= 8) {
+  } else if (++f.mismatch >= 2) {   // собака всегда стоит на полу: не похож — сменились пол или свет
     f.ok = false;   // на следующем кадре — заново
   }
 }
@@ -525,6 +526,10 @@ static inline bool is_floor(int i) {
   return std::fabs(ay[i] - f.y) <= std::max(4 * f.sy, 22.0f) && std::fabs(au[i] - f.u) <= std::max(3 * f.su, 8.0f) &&
          std::fabs(av[i] - f.v) <= std::max(3 * f.sv, 8.0f) && agrad[i] < 40;
 }
+
+static const float PERSON_MAX_ASPECT = 0.6f;   // ширина рамки человека / высота: по записи люди 0.4–0.55
+static const float FLOOR_Y_DRIFT = 45, FLOOR_C_DRIFT = 10;   // насколько дальний пол может отличаться от пола у лап
+static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 static void analyze_floor(Perception &p, double h, double tilt) {
   update_floor_model();
@@ -543,12 +548,30 @@ static void analyze_floor(Perception &p, double h, double tilt) {
   for (int c = 0; c < FREE_COLS; c++) {
     p.free_mm[c] = NAN;
     if (!floor_model.ok || top >= AH - 1) continue;
+    // Пол растёт от низа вверх: строка — пол, если похожа на цвет пола строками ниже. Дальний пол светлее
+    // и бледнее (свет, блики) — опорный цвет плывёт вслед, но от пола под лапами уходит недалеко.
+    const FloorModel &fm = floor_model;
+    float ry = fm.y, ru = fm.u, rv = fm.v;
+    float ty = std::max(3 * fm.sy, 14.0f), tu = std::max(3 * fm.su, 8.0f), tv = std::max(3 * fm.sv, 8.0f);
     int run = 0, boundary = -1;
     for (int y = AH - 1; y >= top; y--) {
       int n = 0;
-      for (int x = c * cw; x < (c + 1) * cw; x++) n += is_floor(y * AW + x);
+      float sy = 0, su = 0, sv = 0;
+      for (int x = c * cw; x < (c + 1) * cw; x++) {
+        int i = y * AW + x;
+        if (std::fabs(ay[i] - ry) <= ty && std::fabs(ay[i] - fm.y) <= FLOOR_Y_DRIFT && std::fabs(au[i] - ru) <= tu &&
+            std::fabs(av[i] - rv) <= tv && agrad[i] < 40) {
+          n++;
+          sy += ay[i];
+          su += au[i];
+          sv += av[i];
+        }
+      }
       if (n * 10 >= cw * 6) {
         run = 0;
+        ry += 0.3f * (sy / n - ry);
+        ru = clampf(ru + 0.15f * (su / n - ru), fm.u - FLOOR_C_DRIFT, fm.u + FLOOR_C_DRIFT);
+        rv = clampf(rv + 0.15f * (sv / n - rv), fm.v - FLOOR_C_DRIFT, fm.v + FLOOR_C_DRIFT);
         continue;
       }
       if (++run == 3) {
@@ -600,6 +623,52 @@ static float expansion(int dx, int dy) {
   return std::min(1.0f, std::max(0.0f, (best_s - 1.02f) / 0.1f));
 }
 
+// Шаг по полу: узор пола в нижней полосе кадра на ходу вперёд съезжает вниз. Ищем, на сколько строк
+// (и чуть вбок) съехала полоса с прошлого синхронного кадра; строку до и после переводим в расстояние
+// по полу — разница и есть пройденное. Собака буксует — узор стоит, шаг ≈ 0. Пол без узора — NAN.
+static const int STEP_Y0 = AH - 28, STEP_Y1 = AH - 6, STEP_X0 = 32, STEP_X1 = AW - 32;
+static const int STEP_MAX_DY = 20, STEP_MAX_DX = 6;   // вбок — увод на ходу
+
+static float floor_step(double h, double tilt) {
+  int area = (STEP_Y1 - STEP_Y0) * (STEP_X1 - STEP_X0);
+  long texture = 0, sa = 0, sb = 0;
+  for (int y = STEP_Y0; y < STEP_Y1; y++)
+    for (int x = STEP_X0; x < STEP_X1; x++) {
+      int i = y * AW + x;
+      texture += agrad[i];
+      sa += ay[i];
+      sb += prev_ay[i];
+    }
+  if (texture < 5L * area) return NAN;
+  int off = (int)((sb - sa) / area);   // экспозиция между кадрами могла смениться
+  float sad[STEP_MAX_DY + 1], mean = 0;
+  int best = 0;
+  for (int dy = 0; dy <= STEP_MAX_DY; dy++) {
+    sad[dy] = INFINITY;
+    for (int dx = -STEP_MAX_DX; dx <= STEP_MAX_DX; dx++) {
+      long s = 0;
+      for (int y = STEP_Y0; y < STEP_Y1; y++) {
+        const int16_t *a = ay + y * AW, *b = prev_ay + (y - dy) * AW + dx;
+        for (int x = STEP_X0; x < STEP_X1; x++) s += std::abs(a[x] - b[x] + off);
+      }
+      sad[dy] = std::min(sad[dy], (float)s / area);
+    }
+    mean += sad[dy];
+    if (sad[dy] < sad[best]) best = dy;
+  }
+  mean /= STEP_MAX_DY + 1;
+  if (best == STEP_MAX_DY || !(sad[best] < 0.6f * mean)) return NAN;   // сдвиг за пределом или совпадение не явное
+  double dy = best;
+  if (best > 0) {   // доля строки — по параболе через соседей
+    double a = sad[best - 1], b = sad[best], c = sad[best + 1], d = a - 2 * b + c;
+    if (d > 0) dy += 0.5 * (a - c) / d;
+  }
+  double yc = (STEP_Y0 + STEP_Y1) / 2.0, f = focal_px();
+  double now_mm = row_to_mm(yc * 4 + 2, h, tilt, f), was_mm = row_to_mm((yc - dy) * 4 + 2, h, tilt, f);
+  if (!std::isfinite(now_mm) || !std::isfinite(was_mm)) return NAN;
+  return (float)(was_mm - now_mm);
+}
+
 static void make_thumb(Perception &p) {
   float s = 0, q = 0;
   int bw = GW / THUMB_W, bh = GH / THUMB_H;
@@ -630,6 +699,8 @@ static void detect(Perception &p, double h, double tilt) {
     if (r.score < PERSON_SCORE) continue;
     Person q;
     q.x1 = r.box[0] * 2; q.y1 = r.box[1] * 2; q.x2 = r.box[2] * 2; q.y2 = r.box[3] * 2;
+    // снизу человек — узкая высокая рамка (ноги, фигура); широкая — кусок обстановки (кухня, коридор, тумба)
+    if (q.x2 - q.x1 > PERSON_MAX_ASPECT * (q.y2 - q.y1)) continue;
     q.score = r.score;
     q.bearing_deg = vision_bearing_deg((q.x1 + q.x2) / 2.0);
     // ступни видны (рамка не упирается в низ) — расстояние по полу; иначе по высоте рамки, если видна голова
@@ -669,7 +740,9 @@ static void analyze(const uint8_t *jpeg, size_t len, double t, const Motion &m, 
     int dx, dy;
     p.residual = align(gray, prev_gray, GW, GH, turning ? 30 : 6, 4, dx, dy);
     p.dt = t - prev_t;
-    if (turning && p.residual < 16) p.yaw_deg = dx * cfg.hfov_deg / GW;
+    // на ходу прямо — тоже: из-за сборки и серво собака уводит в сторону
+    if ((turning || m.vx > 0.3) && p.residual < 16) p.yaw_deg = dx * cfg.hfov_deg / GW;
+    if (m.vx > 0.3 && std::fabs(m.turn) < 0.3) p.step_mm = floor_step(h, tilt);
     if (m.vx > 0.3) {
       p.expansion = expansion(dx, dy);
       p.closeness = std::min(1.0f, p.closeness + 0.25f * p.expansion);
@@ -686,6 +759,7 @@ static void analyze(const uint8_t *jpeg, size_t len, double t, const Motion &m, 
   }
   if (is_synced) {
     memcpy(prev_gray, gray, GW * GH);
+    memcpy(prev_ay, ay, AW * AH * sizeof *ay);
     prev_valid = true;
     prev_t = t;
   } else {
@@ -796,6 +870,7 @@ void vision_begin() {
   scan_work = ps(JPEG_WORK);
   gray = ps(GW * GH);
   prev_gray = ps(GW * GH);
+  prev_ay = (int16_t *)ps(AW * AH * 2);
   for (auto &b : bin_thumb) b = ps(GW * GH);
   // Ядро 1, ниже контура серво: тяжёлый анализ не мешает шагу. Стек в PSRAM — внутренней памяти мало;
   // так можно, пока задача не пишет во флеш (NVS пишут HTTP и задача захвата).
@@ -823,8 +898,9 @@ int vision_headers(char *buf, size_t cap) {
   n += snprintf(buf + n, cap - n, "\r\nX-Free: ");
   for (int c = 0; c < FREE_COLS && n < (int)cap - 8; c++) n += snprintf(buf + n, cap - n, "%s%d", c ? "," : "", cm(p.free_mm[c]));
   // h, tilt, fov — геометрия камеры на этом кадре: по ним клиент переводит расстояния X-Free в строки кадра
-  n += snprintf(buf + n, cap - n, "\r\nX-Vision: seq=%u;close=%.2f;synced=%d;age=%d;h=%.0f;tilt=%.1f;fov=%.0f\r\n", p.seq,
-                p.closeness, p.synced, (int)((now_s() - p.t) * 1000), p.h_mm, p.tilt_deg, cfg.hfov_deg);
+  n += snprintf(buf + n, cap - n, "\r\nX-Vision: seq=%u;close=%.2f;synced=%d;age=%d;h=%.0f;tilt=%.1f;fov=%.0f;step=%d\r\n", p.seq,
+                p.closeness, p.synced, (int)((now_s() - p.t) * 1000), p.h_mm, p.tilt_deg, cfg.hfov_deg,
+                std::isfinite(p.step_mm) ? (int)std::lround(p.step_mm) : -1);
   return std::min(n, (int)cap);
 }
 
@@ -887,6 +963,7 @@ void vision_state(JsonObject out) {
   last["expansion"] = std::round(p.expansion * 100) / 100;
   if (std::isfinite(p.residual)) last["residual"] = std::round(p.residual * 10) / 10;
   if (std::isfinite(p.yaw_deg)) last["yaw_deg"] = std::round(p.yaw_deg * 10) / 10;
+  if (std::isfinite(p.step_mm)) last["step_mm"] = std::round(p.step_mm);
   last["stagnant"] = p.stagnant;
   JsonArray fr = last["free_cm"].to<JsonArray>();
   for (float f : p.free_mm) fr.add(cm(f));

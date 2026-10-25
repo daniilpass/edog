@@ -43,7 +43,6 @@ static const double PATROL_IGNORE_S = 18.0;        // после приветс�
 static const double PATROL_TURN_DPS = 45.0;        // скорость разворота на месте, °/с (уточняется по камере)
 static const double PATROL_SLIP = 0.7;             // доля расчётной скорости шага, которая доходит до пола
 static const double PATROL_GREET_MM = 1100.0;      // подходить к человеку до этого расстояния
-static const double PATROL_TOO_CLOSE_MM = 500.0;   // ближе — сначала отойти назад
 static const double PATROL_MEMORY_S = 480.0;       // зрительная память мест: столько помнит увиденное
 
 // ---------- драйвер PCA9685 ----------
@@ -84,10 +83,10 @@ struct GaitCfg {
   double gait_hz, stride_mm, lift_mm, foot_x_mm, height_mm;
 };
 static const GaitCfg GAITS[] = {
-  // foot_x −15: против заваливания на задние лапы; −10 мало, −20 клюёт носом
-  {"base", "Базовая", 1.6, 30.0, 15.0, -15.0, NAN},
+  // foot_x −10 с батареей на крышке: −15 грузит передние лапы, −5 проваливаются задние
+  {"base", "Базовая", 1.6, 30.0, 15.0, -10.0, NAN},
   // всё как у base, корпус чуть выше: лапа опирается на стоппер
-  {"base_stopper", "Базовая на стопперах", 1.6, 30.0, 15.0, -15.0, 78.0},
+  {"base_stopper", "Базовая на стопперах", 1.6, 30.0, 15.0, -10.0, 78.0},
 };
 static const int GAIT_COUNT = sizeof(GAITS) / sizeof(GAITS[0]);
 

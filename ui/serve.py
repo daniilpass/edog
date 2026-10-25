@@ -6,17 +6,23 @@
     python ui/serve.py --port 9000
 
 Адрес собаки задаётся в шапке портала или ссылкой: http://localhost:8000/?dog=192.168.50.129:8080
+Запись (кнопка «Записывать» у камеры) сохраняется сюда, в recordings/<время>/: кадры NNNNN.jpg и log.jsonl —
+заголовки каждого кадра и состояние собаки (патруль, зрение, ходьба). На плате памяти для этого нет.
 Зависимостей нет — только стандартная библиотека.
 """
 
 import argparse
 import http.server
+import re
 import socket
+import time
 import urllib.parse
 from pathlib import Path
 
 UI = Path(__file__).resolve().parent
 MODELS = UI.parent / "cad" / "web"
+RECORDINGS = UI.parent / "recordings"
+REC_FILE = re.compile(r"^/rec/(\d{8}-\d{6})/(\d{5}\.jpg|log\.jsonl)$")
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -32,6 +38,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if full != base and base not in full.parents:  # не выпускаем за пределы папки
             return str(base / "__forbidden__")
         return str(full)
+
+    # Запись: POST /rec/start → имя папки; PUT /rec/<имя>/NNNNN.jpg — кадр; POST /rec/<имя>/log.jsonl — дописать строки.
+    def do_POST(self):
+        if self.path == "/rec/start":
+            name = time.strftime("%Y%m%d-%H%M%S")
+            (RECORDINGS / name).mkdir(parents=True, exist_ok=True)
+            print(f"Запись: {RECORDINGS / name}")
+            return self.reply(200, name)
+        self.save("ab")
+
+    def do_PUT(self):
+        self.save("wb")
+
+    def save(self, mode):
+        m = REC_FILE.match(self.path)
+        folder = RECORDINGS / m.group(1) if m else None
+        if not m or not folder.is_dir():
+            return self.reply(404, "no such recording")
+        data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        with open(folder / m.group(2), mode) as f:
+            f.write(data)
+        self.reply(200, "ok")
+
+    def reply(self, code, text):
+        body = text.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache")  # после правок не нужен Ctrl+F5

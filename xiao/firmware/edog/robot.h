@@ -157,7 +157,7 @@ class Robot {
   double web_drive_t_ = -1e9;
   double patrol_drive_[2] = {0, 0};
   double patrol_drive_t_ = -1e9;
-  double phase_ = 0, walk_blend_ = 0, forward_blend_ = 1;
+  double phase_ = 0, walk_blend_ = 0, forward_blend_ = 1, back_blend_ = 0;
   double cycles_ = 0;                 // фаза с начала ходьбы, не сворачивается в 0 … 1
   void record_motion();
   bool walking_ = false;
