@@ -45,6 +45,10 @@ static const double PATROL_SLIP = 0.7;             // доля расчётно�
 static const double PATROL_GREET_MM = 1100.0;      // подходить к человеку до этого расстояния
 static const double PATROL_MEMORY_S = 480.0;       // зрительная память мест: столько помнит увиденное
 
+// ---------- сон ----------
+static const double SLEEP_AFTER_S = 60.0;          // автосон: столько стоит без команд, движения и патруля
+static const uint32_t SLEEP_CPU_MHZ = 80;          // частота процессора во сне (меньше 80 Wi-Fi не работает)
+
 // ---------- драйвер PCA9685 ----------
 static const int I2C_SDA = 5;                 // D4
 static const int I2C_SCL = 6;                 // D5

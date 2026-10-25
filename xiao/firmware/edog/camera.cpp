@@ -33,6 +33,7 @@ static const size_t FRAME_CAP = 160 * 1024;   // JPEG VGA при качеств�
 static String sensor, error;
 static std::atomic<uint32_t> frames{0}, captured{0};
 static std::atomic<int> clients{0};
+static std::atomic<bool> sleeping{false};   // сон: кадров нет, сенсор в режиме ожидания
 // Поток один: сервер видео отдаёт его в одной задаче. Зритель — id из /stream?id=; другое устройство
 // забирает поток через camera_take, текущий цикл видит чужой id и закрывает соединение.
 static std::atomic<uint32_t> viewer{0};
@@ -80,6 +81,10 @@ uint32_t camera_latest(uint8_t *buf, size_t cap, size_t &len, double &t, uint32_
 
 static void capture_task(void *) {
   for (;;) {
+    if (sleeping) {
+      delay(100);
+      continue;
+    }
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
       delay(10);
@@ -108,6 +113,10 @@ static esp_err_t stream_handler(httpd_req_t *req) {
       httpd_query_key_value(query, "id", value, sizeof value) == ESP_OK)
     id = strtoul(value, nullptr, 10);
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  if (sleeping) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, "dog is asleep");
+  }
   uint32_t v = current_viewer();
   if (v && v != id) {   // поток только что забрало другое устройство
     httpd_resp_set_status(req, "409 Conflict");
@@ -212,6 +221,17 @@ void camera_begin() {
   u.handler = stream_handler;
   httpd_register_uri_handler(h, &u);
   Serial.printf("Камера %s: http://<адрес>:%d/stream, %d кадр/с\n", sensor.c_str(), STREAM_PORT, CAMERA_FPS);
+}
+
+// Вывода питания (PWDN) у Sense нет: сенсор усыпляется регистром по SCCB, тактирование остаётся.
+void camera_sleep(bool on) {
+  if (sensor.isEmpty() || sleeping == on) return;
+  if (on) sleeping = true;   // сначала задача захвата перестаёт ждать кадры
+  sensor_t *s = esp_camera_sensor_get();
+  if (s->id.PID == OV2640_PID) s->set_reg(s, 0x109, 0x10, on ? 0x10 : 0);   // банк сенсора, COM2[4]: standby
+  else s->set_reg(s, 0x3008, 0x40, on ? 0x40 : 0);                         // OV3660/OV5640: SYSTEM CTROL0[6]
+  if (!on) sleeping = false;
+  Serial.printf("Камера: %s\n", on ? "режим ожидания" : "снимает");
 }
 
 void camera_describe(JsonObject out) {

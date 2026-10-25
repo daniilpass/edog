@@ -7,6 +7,7 @@
 
 #include "hid.h"
 #include "patrol.h"
+#include "sleep.h"
 
 // ---------- раскладка (как gamepad.py) ----------
 
@@ -82,9 +83,21 @@ static void action(const std::string &a) {
   }
 }
 
+// Спящую собаку любая кнопка будит и встаёт в стойку; своё действие кнопка при этом не выполняет.
+static bool woke() {
+  if (!sleep_active()) return false;
+  try {
+    sleep_wake("кнопка геймпада");
+  } catch (const std::exception &e) {
+    Serial.printf("геймпад: %s\n", e.what());
+  }
+  return true;
+}
+
 static void button_down(const std::string &name) {
   robot->gamepad.last_button = name;
   robot->pad_presses++;
+  if (woke()) return;
   if (const char *a = lookup(GAMEPAD_BUTTONS, std::size(GAMEPAD_BUTTONS), name)) action(a);
 }
 
@@ -93,6 +106,7 @@ static void dpad(const char *side) {
   for (char &c : name) c = toupper(c);
   robot->gamepad.last_button = name;
   robot->pad_presses++;
+  if (woke()) return;
   if (const char *a = lookup(GAMEPAD_DPAD, std::size(GAMEPAD_DPAD), side)) action(a);
 }
 

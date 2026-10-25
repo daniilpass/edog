@@ -191,7 +191,9 @@ function render(s) {
   if (s.roll_offset) $('o-roll').textContent += ` · бамперы ${s.roll_offset > 0 ? '+' : ''}${s.roll_offset.toFixed(0)}°`;
   const d = s.drive;
   $('drive-info').textContent = `vx ${d.vx.toFixed(2)} · поворот ${d.turn.toFixed(2)} · ${{ web: 'портал', patrol: 'патруль' }[d.source] ?? 'геймпад'}`;
-  $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', manual: 'ручной', demo: 'демо' }[s.mode]}`;
+  $('overlay').textContent = `${s.enabled ? 'серво включены' : 'серво отключены'} · ${{ stand: 'стойка', manual: 'ручной', demo: 'демо' }[s.mode]}`
+    + (s.sleep?.active ? ' · спит' : '');
+  renderSleep(s.sleep);
   renderDemo(s);
   renderGait(s.gait);
   renderCamera(s);
@@ -537,6 +539,12 @@ function setupCamera() {
 function renderCamera(s) {
   const cam = config.camera;
   if (!cam?.ok || !s.camera) return;
+  if (s.sleep?.active) {   // камера спит: видео не просить, после пробуждения подключиться заново
+    if (camMode === 'watch') { camMode = 'wait'; camStop(''); }
+    if (camMode === 'wait') { camStarted = Date.now(); $('cam-msg').textContent = 'Собака спит — камера выключена'; }
+    $('cam-info').textContent = `${cam.sensor} · собака спит · ${camUrl}`;
+    return;
+  }
   const viewer = s.camera.viewer ?? 0, other = viewer !== 0 && viewer !== camId;
   if (camMode === 'watch' && other) {
     camAsk('Видео переключили на другое устройство. Вернуть сюда?');
@@ -549,6 +557,18 @@ function renderCamera(s) {
   }
   const status = { watch: `${s.camera.fps} кадр/с из ${cam.fps}`, ask: 'на другом устройстве', off: 'выключено', wait: 'подключение' }[camMode];
   $('cam-info').textContent = `${cam.sensor} · ${status} · ${camUrl}`;
+}
+
+// Сон (только XIAO): кнопка в шапке усыпляет и будит; без сна в состоянии (Pi) её нет.
+function renderSleep(sl) {
+  const b = $('sleep');
+  b.hidden = !sl;
+  if (!sl) return;
+  b.textContent = sl.active ? 'Разбудить' : 'Сон';
+  b.classList.toggle('primary', sl.active);
+  b.dataset.title ??= b.title;
+  b.title = sl.active ? `Спит (${sl.reason}). Разбудить и встать в стойку`
+    : `${b.dataset.title}. Автосон через ${Math.max(0, Math.round(sl.after_s - sl.idle_s))} с`;
 }
 
 // ---------- патруль, зрение, радар ----------
@@ -901,6 +921,7 @@ function renderDetail() {
 function bindControls() {
   $('torque').onchange = e => api('POST', '/api/enable', { enabled: e.target.checked });
   $('estop').onclick = () => api('POST', '/api/estop');
+  $('sleep').onclick = () => api('POST', '/api/sleep', { sleep: !state?.sleep?.active });
   $('gait').innerHTML = config.gaits.map(g => `<option value="${g.name}">${g.title} · ~${(g.speed_mm_s / 10).toFixed(1)} см/с</option>`).join('');
   $('gait').onchange = e => api('POST', '/api/gait', { name: e.target.value })
     .then(() => { calibDirty = true; e.target.blur(); toast('Профиль шага выбран (не забудьте сохранить)'); });

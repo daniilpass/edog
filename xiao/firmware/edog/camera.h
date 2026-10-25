@@ -7,6 +7,7 @@ void camera_describe(JsonObject out);
 void camera_state(JsonObject out);
 void camera_take(uint32_t id);   // забрать видео этому зрителю
 int camera_clients();            // сколько зрителей смотрит видео
+void camera_sleep(bool on);      // сон: кадров нет, сенсор в режиме ожидания, видео отвечает 503
 
 // Последний кадр JPEG новее after (номер кадра): копия в buf (ёмкость cap), время съёмки, с.
 // 0 — нового кадра нет за wait_ms; иначе номер кадра.

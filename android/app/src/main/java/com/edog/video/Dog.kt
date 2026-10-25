@@ -18,7 +18,7 @@ import org.json.JSONObject
 class BusyException : IOException("видео занято")
 
 // Собака по API платы XIAO: /api/config (порт и путь видео), /api/state (camera.viewer),
-// POST /api/camera/take, POST /api/patrol, POST /api/gait и MJPEG-поток /stream?id=.
+// POST /api/camera/take, POST /api/patrol, POST /api/gait, POST /api/sleep и MJPEG-поток /stream?id=.
 class Dog(context: Context, address: String) {
     private val host: String
     private val port: Int
@@ -40,8 +40,20 @@ class Dog(context: Context, address: String) {
 
     val label get() = "$host:$port"
 
+    fun state(): JSONObject = request("GET", "/api/state")
+
     // Кто смотрит видео: id зрителя, 0 — поток свободен.
-    fun viewer(): Long = request("GET", "/api/state").optJSONObject("camera")?.optLong("viewer") ?: 0
+    fun viewer(): Long = state().optJSONObject("camera")?.optLong("viewer") ?: 0
+
+    // Спит ли собака (во сне камера выключена).
+    fun asleep(state: JSONObject = state()): Boolean = state.optJSONObject("sleep")?.optBoolean("active") == true
+
+    // Сон: спит — разбудить (встанет в стойку), не спит — усыпить. true — уснула.
+    fun toggleSleep(): Boolean {
+        val sleep = !asleep()
+        request("POST", "/api/sleep", JSONObject().put("sleep", sleep))
+        return sleep
+    }
 
     fun take(id: Long) {
         request("POST", "/api/camera/take", JSONObject().put("id", id))
@@ -49,13 +61,13 @@ class Dog(context: Context, address: String) {
 
     // Патруль: включён — остановить, выключен — запустить. true — запущен.
     fun togglePatrol(): Boolean {
-        val off = request("GET", "/api/state").optJSONObject("patrol")?.optString("state", "off") == "off"
+        val off = state().optJSONObject("patrol")?.optString("state", "off") == "off"
         request("POST", "/api/patrol", JSONObject().put("action", if (off) "start" else "stop"))
         return off
     }
 
     // Стойка — профиль ходьбы: "base" или "base_stopper".
-    fun gait(): String = request("GET", "/api/state").optString("gait")
+    fun gait(): String = state().optString("gait")
 
     // Базовая ↔ базовая на стопперах. Возвращает новый профиль.
     fun toggleGait(): String {

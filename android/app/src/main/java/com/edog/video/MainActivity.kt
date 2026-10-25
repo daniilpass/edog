@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private lateinit var take: Button
     private lateinit var patrol: Button
     private lateinit var stance: Button
+    private lateinit var sleep: Button
     private lateinit var info: TextView
 
     private val prefs by lazy { getSharedPreferences("edog", Context.MODE_PRIVATE) }
@@ -92,16 +93,27 @@ class MainActivity : Activity() {
             alpha = 0.7f
             setOnClickListener { toggleStance() }
         }
+        sleep = Button(this).apply {
+            text = "Сон"
+            alpha = 0.7f
+            setOnClickListener { toggleSleep() }
+        }
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(patrol, LinearLayout.LayoutParams(-1, -2))
             addView(stance, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (8 * dp).toInt() })
         }
+        // Справа — тоже не больше двух кнопок: в портретной ориентации третья заехала бы на видео
+        val right = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(settings, LinearLayout.LayoutParams(-1, -2))
+            addView(sleep, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (8 * dp).toInt() })
+        }
         val overlay = FrameLayout(this).apply {
             addView(center, FrameLayout.LayoutParams(-1, -1))
             addView(buttons, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
             addView(info, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
-            addView(settings, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
+            addView(right, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
         }
         // Подписи и кнопки не прячутся под вырез экрана и системные панели
         overlay.setOnApplyWindowInsetsListener { v, insets ->
@@ -213,6 +225,26 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    // Сон: усыпить ↔ разбудить. Видео после пробуждения подключит рабочий поток.
+    private fun toggleSleep() {
+        val d = dog ?: return toast("Нет связи с собакой")
+        sleep.isEnabled = false
+        Thread {
+            val result = try {
+                val asleep = d.toggleSleep()
+                ui { showSleep(asleep) }
+                if (asleep) "Собака уснула" else "Собака проснулась"
+            } catch (e: IOException) {
+                "Сон: ${e.message}"
+            }
+            ui { sleep.isEnabled = true; toast(result) }
+        }.start()
+    }
+
+    private fun showSleep(asleep: Boolean) {
+        sleep.text = if (asleep) "Разбудить" else "Сон"
+    }
+
     private fun showStance(gait: String) {
         stance.text = "Стойка: ${STANCE_NAMES[gait] ?: gait}"
     }
@@ -242,10 +274,19 @@ class MainActivity : Activity() {
                     ui { status("Поиск собаки: $address…"); info.text = "" }
                     Dog(this, address).also { dog = it }
                 }
-                val viewer = d.viewer()
+                val state = d.state()
+                val asleep = d.asleep(state)
+                val gait = state.optString("gait")
+                ui { info.text = d.label; showStance(gait); showSleep(asleep) }
+                if (asleep) {   // камера спит: ждём пробуждения
+                    watched = false
+                    ui { video.show(null); radar.visibility = View.GONE; status("Собака спит\nРазбудить — кнопкой «Разбудить», из портала или кнопкой геймпада") }
+                    if (!pause(2000)) return
+                    continue
+                }
+                val viewer = state.optJSONObject("camera")?.optLong("viewer") ?: 0
                 if (viewer != 0L && viewer != myId && !askTake(d, watched)) return
-                val gait = d.gait()
-                ui { status("Подключение к видео…"); info.text = d.label; showStance(gait) }
+                ui { status("Подключение к видео…") }
                 watched = d.stream(myId) { bmp, headers ->
                     val v = Vision(headers)
                     ui {

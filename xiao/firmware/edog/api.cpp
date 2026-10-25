@@ -9,6 +9,7 @@
 #include "camera.h"
 #include "gamepad.h"
 #include "patrol.h"
+#include "sleep.h"
 #include "vision.h"
 
 static const int STATE_HZ = 20;
@@ -130,6 +131,7 @@ static void state_reply(JsonDocument &out) {
   camera_state(out["camera"].to<JsonObject>());
   vision_state(out["vision"].to<JsonObject>());
   patrol_state(out["patrol"].to<JsonObject>());
+  sleep_state(out["sleep"].to<JsonObject>());
 }
 
 static void route(httpd_method_t method, const std::string &path, const String &body, JsonDocument &out) {
@@ -154,6 +156,7 @@ static void route(httpd_method_t method, const std::string &path, const String &
   if (method != HTTP_GET && !starts(path, "/api/patrol") && !starts(path, "/api/vision") && !starts(path, "/api/camera") &&
       path != "/api/calibration/save" && path != "/api/gait")
     patrol_user_activity();
+  if (method != HTTP_GET) sleep_activity();
 
   if (method == HTTP_GET) {
     if (path == "/") {
@@ -169,7 +172,14 @@ static void route(httpd_method_t method, const std::string &path, const String &
   } else if (method == HTTP_POST) {
     if (path == "/api/enable") {
       if (!req["enabled"].is<bool>()) throw HttpError{422, "enabled: нужно true/false"};
-      r.set_enabled(req["enabled"].as<bool>());
+      bool on = req["enabled"].as<bool>();
+      if (on && sleep_active()) sleep_wake("включение серво");   // и встаёт в стойку
+      else r.set_enabled(on);
+    } else if (path == "/api/sleep") {
+      // Сон: true — уснуть (серво, камера и патруль выключаются), false — проснуться и встать в стойку.
+      if (!req["sleep"].is<bool>()) throw HttpError{422, "sleep: нужно true/false"};
+      if (req["sleep"].as<bool>()) sleep_enter("из портала");
+      else sleep_wake("из портала");
     } else if (path == "/api/estop") {
       r.estop();
     } else if (path == "/api/mode") {
@@ -205,8 +215,10 @@ static void route(httpd_method_t method, const std::string &path, const String &
       camera_take((uint32_t)need(req["id"], "id", 1, 4294967295.0));
     } else if (path == "/api/patrol") {
       // Патруль: start — включить (серво включатся сами, кивок, осмотр), stop — выключить.
-      if (choice(req["action"], "action", {"start", "stop"}) == "start") patrol_start();
-      else patrol_stop("выключен из портала");
+      if (choice(req["action"], "action", {"start", "stop"}) == "start") {
+        sleep_wake("запуск патруля", false);
+        patrol_start();
+      } else patrol_stop("выключен из портала");
     } else if (path == "/api/vision/phase_scan") {
       // Подбор фазы съёмки на ходу: собака должна идти эти секунды (патруль или вручную).
       double s = 20;
@@ -402,6 +414,7 @@ static esp_err_t firmware_handler(httpd_req_t *req) {
   {
     RobotLock lock;
     if (robot->updating) return send_error(req, HttpError{409, "обновление прошивки уже идёт"});
+    sleep_wake("обновление прошивки", false);   // загрузка на полной частоте и без экономии Wi-Fi
     remember_state();
     robot->updating = true;   // заодно не даёт включить серво до перезагрузки
     if (patrol_active()) patrol_stop("обновление прошивки");
@@ -533,6 +546,7 @@ static esp_err_t ws_handler(httpd_req_t *req) {
       robot->set_web_drive(msg["vx"] | 0.0, msg["turn"] | 0.0);
     } else if (type == "servo") {
       patrol_user_activity();
+      sleep_activity();
       if (!msg["id"].is<const char *>()) throw KeyError("'id'");
       double a, j;
       const double *angle = msg["angle"].is<double>() ? &(a = msg["angle"].as<double>()) : nullptr;
