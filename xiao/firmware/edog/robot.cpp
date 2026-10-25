@@ -21,7 +21,7 @@ static const double SCALE_MIN_SPAN_DEG = 10.0;    // масштаб пишетс
 static const double SCALE_RANGE[2] = {0.7, 1.3};  // масштаб за этими пределами — скорее промах при калибровке
 static const double POWER_DOWN_TIMEOUT_S = 5.0;   // не дошла до монтажного положения за это время — сигнал снимается всё равно
 // Рысь: диагональные пары в противофазе. Фаза цикла, в которую нога отрывается от пола: FL, FR, RL, RR.
-static const double TROT_START[4] = {0.0, 0.5, 0.5, 0.0};
+static const double TROT_START[4] = {0.5, 0.0, 0.0, 0.5};
 static const char *const JOINTS[2] = {"hip", "knee"};
 const char *const PAD_AXES[6] = {"drive", "turn", "pitch", "roll", "height_down", "height_up"};
 

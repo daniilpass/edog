@@ -63,7 +63,7 @@ static const double BODY_WIDTH_MM = 95.0;     // колея: расстояни�
 
 // ---------- движение ----------
 static const double LOOP_HZ = 100;            // чаще ШИМ 50 Гц: каждый период серво получает свежий импульс
-static const double MAX_SPEED_DPS = 300;      // ограничение скорости поворота серво, °/с
+static const double MAX_SPEED_DPS = 750;      // ограничение скорости поворота серво, °/с: паспортный максимум MG90S при 6 В (0.08 с/60°), UBEC 6 В
 static const double STAND_HEIGHT_MM = 70.0;   // высота оси бедра над полом в стойке
 static const double MIN_HEIGHT_MM = 35.0;
 static const double MAX_HEIGHT_MM = 88.0;
@@ -84,9 +84,9 @@ struct GaitCfg {
 };
 static const GaitCfg GAITS[] = {
   // foot_x −10 с батареей на крышке: −15 грузит передние лапы, −5 проваливаются задние
-  {"base", "Базовая", 1.6, 30.0, 15.0, -10.0, NAN},
+  {"base", "Базовая", 2.9, 30.0, 15.0, -10.0, NAN},
   // всё как у base, корпус чуть выше: лапа опирается на стоппер
-  {"base_stopper", "Базовая на стопперах", 1.6, 30.0, 15.0, -10.0, 78.0},
+  {"base_stopper", "Базовая на стопперах", 2.2, 30.0, 15.0, -10.0, 78.0},
 };
 static const int GAIT_COUNT = sizeof(GAITS) / sizeof(GAITS[0]);
 
