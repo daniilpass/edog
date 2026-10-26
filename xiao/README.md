@@ -1,6 +1,6 @@
 # XIAO ESP32-S3 Sense
 
-Всё, что относится к плате Seeed XIAO ESP32-S3 Sense, которая заменяет Raspberry Pi. Код для RPi лежит в `rpi/`.
+Всё, что относится к плате Seeed XIAO ESP32-S3 Sense — текущему «мозгу» собаки. Что купить и как собрать собаку целиком, описано в [README](../README.md). Код прежней версии на Raspberry Pi (легаси) лежит в `rpi/`.
 
 ```
 firmware/edog/       — прошивка собаки: серво, BLE-геймпад, API для портала, видео с камеры, патруль по камере
@@ -9,7 +9,7 @@ ui/                  — страница проверки для xiao_test, з�
 start.cmd            — запуск страницы проверки: http://localhost:8001/
 ota.py               — сборка и прошивка собаки по воздуху (сборка кладётся в build/, не в git)
 models/              — модель людей ESP-DL (.espdl) и скрипт, который делает из неё pedestrian_model.h
-backup/              — сохранённые прошивки для отката
+backup/              — сохранённые прошивки для отката (не в git)
 ```
 
 ## Прошивка собаки (`firmware/edog`)
@@ -34,6 +34,7 @@ backup/              — сохранённые прошивки для отка
 Нужен [arduino-cli](https://arduino.github.io/arduino-cli/) с ядром ESP32 (`esp32:esp32`, ставится из `https://espressif.github.io/arduino-esp32/package_esp32_index.json`) и две библиотеки:
 
 ```
+arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
 arduino-cli lib install ArduinoJson NimBLE-Arduino
 arduino-cli compile -b esp32:esp32:XIAO_ESP32S3:PSRAM=opi xiao/firmware/edog
 arduino-cli upload  -b esp32:esp32:XIAO_ESP32S3:PSRAM=opi -p COM3 xiao/firmware/edog
